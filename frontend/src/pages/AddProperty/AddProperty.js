@@ -363,6 +363,8 @@ export default function AddPropertyPage() {
 
   /* ================= RENT PREDICTION FUNCTION ================= */
   const predictRent = useCallback(async () => {
+    console.log('🎯 predictRent called');
+    
     // Check if we have enough data for prediction
     if (!city || !bedrooms || !bathrooms || !squareFootage || !furnishing || !ptype) {
       setPredictionError("Please fill in property details first (property type, bedrooms, bathrooms, square footage, furnishing, and location)");
@@ -474,10 +476,16 @@ export default function AddPropertyPage() {
       setPredictionLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [city, bedrooms, bathrooms, squareFootage, furnishing, propertyAge, ptype, selectedAmenities]);
+}, [city, bedrooms, bathrooms, squareFootage, furnishing, propertyAge, ptype, selectedAmenities.length]);
 
   // Real-time prediction - trigger every time required fields change
   useEffect(() => {
+    console.log('🔁 useEffect triggered. Dependencies changed:', {
+      city, ptype, bedrooms, bathrooms, squareFootage, furnishing,
+      propertyAge, amenitiesLength: selectedAmenities.length,
+      predictionLoading, predictRent
+    });
+    
     // Check if we have all required data for a prediction
     const hasRequiredData = city && ptype && bedrooms && bathrooms && squareFootage && furnishing;
     
@@ -495,11 +503,12 @@ export default function AddPropertyPage() {
         setPredictedRent(null);
       }
     }
-    // ✅ Added missing dependencies: propertyAge, selectedAmenities
+    // ✅ Added missing dependencies: propertyAge, selectedAmenities.length
     // ✅ Removed showPrediction from deps (it's only read, not needed for effect)
+    // ✅ Removed predictionLoading to prevent infinite loop
     // ✅ Keep predictRent (it's stable now after fixing its deps)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [city, ptype, bedrooms, bathrooms, squareFootage, furnishing, propertyAge, selectedAmenities.length, predictionLoading, predictRent]);
+}, [city, ptype, bedrooms, bathrooms, squareFootage, furnishing, propertyAge, selectedAmenities.length, predictRent]);
 
   // Reset userManuallyChangedRent when property fields change
   useEffect(() => {
