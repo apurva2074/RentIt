@@ -175,11 +175,11 @@ router.post('/predict', async (req, res) => {
     
     const responseData = {
       success: true,
-      predictedRent: response.predicted_rent,
+      predicted_rent: response.predicted_rent,
       currency: response.currency || 'INR',
       period: response.period || 'monthly',
-      confidenceScore: response.confidence_score || 0.85,
-      inputUsed: response.input_used || modelInput,
+      confidence_score: response.confidence_score || 0.85,
+      input_used: response.input_used || modelInput,
       message: response.input_used ? `Prediction based on ${response.input_used.area}` : 'Prediction completed'
     };
     
