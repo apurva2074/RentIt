@@ -431,6 +431,14 @@ export default function AddPropertyPage() {
 
       const response = await api.post('/api/rent-prediction/predict', requestData);
 
+      // Debug: Log the entire response structure
+      console.log('=== Frontend Response Debug ===');
+      console.log('Full response object:', response);
+      console.log('Response data:', response.data);
+      console.log('Response status:', response.status);
+      console.log('Has predicted_rent:', !!response.data?.predicted_rent);
+      console.log('================================');
+
       if (response.data && response.data.predicted_rent) {
         setPredictedRent(response.data.predicted_rent);
         setShowPrediction(true);
