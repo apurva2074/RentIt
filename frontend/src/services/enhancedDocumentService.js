@@ -10,7 +10,7 @@ const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:5000';
 /**
  * Upload document with AI verification status tracking
  * @param {File} file - Document file to upload
- * @param {string} documentType - Type of document (idProof, addressProof, etc.)
+ * @param {string} documentType - Type of document (idProof, etc.)
  * @returns {Promise<Object>} - Upload result with status
  */
 export const uploadDocumentWithVerification = async (file, documentType) => {

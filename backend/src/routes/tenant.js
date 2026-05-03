@@ -59,7 +59,6 @@ module.exports = ({ admin, db }) => {
         data: {
           hasRequiredDocuments,
           idProofUrl: tenantData.idProofUrl || null,
-          addressProofUrl: tenantData.addressProofUrl || null,
           message: hasRequiredDocuments ? "Tenant has provided required information" : "Please provide at least one required field (name, date of birth, address, or government ID)"
         }
       });
@@ -135,11 +134,8 @@ module.exports = ({ admin, db }) => {
         dob,
         phone,
         address,
-        emergencyContactName,
-        emergencyContactPhone,
         idType,
-        idProofUrl,
-        addressProofUrl
+        idProofUrl
       } = req.body;
 
       console.log(`Saving tenant details for: ${tenantId}`);
@@ -152,11 +148,8 @@ module.exports = ({ admin, db }) => {
         dob: dob || '',
         phone: phone || '',
         address: address || '',
-        emergencyContactName: emergencyContactName || '',
-        emergencyContactPhone: emergencyContactPhone || '',
         idType: idType || '',
-        idProofUrl: idProofUrl || '',
-        addressProofUrl: addressProofUrl || ''
+        idProofUrl: idProofUrl || ''
       };
 
       console.log('Tenant data to save:', tenantData);

@@ -55,8 +55,7 @@ export default function RentalDocuments({ uid }) {
   
   // Document verification status tracking
   const [documentStatuses, setDocumentStatuses] = useState({
-    idProof: null,
-    addressProof: null
+    idProof: null
   });
   
   const [formData, setFormData] = useState({
@@ -64,16 +63,12 @@ export default function RentalDocuments({ uid }) {
     dob: '',
     phone: '',
     address: '',
-    emergencyContactName: '',
-    emergencyContactPhone: '',
     idType: '',
-    idProofUrl: '',
-    addressProofUrl: ''
+    idProofUrl: ''
   });
 
   const [uploadProgress, setUploadProgress] = useState({
-    idProof: 0,
-    addressProof: 0
+    idProof: 0
   });
 
   // Fetch user profile data to pre-fill name and phone
@@ -86,8 +81,8 @@ export default function RentalDocuments({ uid }) {
       if (response && (response.name || response.phone)) {
         setFormData(prev => ({
           ...prev,
-          fullName: response.name || '',
-          phone: response.phone || ''
+          fullName: response.data.name || '',
+          phone: response.data.phone || ''
         }));
         console.log("Pre-filled user data:", { name: response.name, phone: response.phone });
       }
@@ -112,13 +107,6 @@ export default function RentalDocuments({ uid }) {
         response.documents.forEach(doc => {
           if (doc.documentType === 'idProof') {
             statuses.idProof = doc;
-            if (doc.status === 'rejected' || doc.status === 'verification_failed') {
-              hasFailed = true;
-            } else if (doc.status === 'approved') {
-              hasApproved = true;
-            }
-          } else if (doc.documentType === 'addressProof') {
-            statuses.addressProof = doc;
             if (doc.status === 'rejected' || doc.status === 'verification_failed') {
               hasFailed = true;
             } else if (doc.status === 'approved') {
@@ -177,16 +165,13 @@ export default function RentalDocuments({ uid }) {
           dob: response.data.dob || prev.dob || '',
           phone: response.data.phone || prev.phone || '',
           address: response.data.address || prev.address || '',
-          emergencyContactName: response.data.emergencyContactName || prev.emergencyContactName || '',
-          emergencyContactPhone: response.data.emergencyContactPhone || prev.emergencyContactPhone || '',
           idType: response.data.idType || prev.idType || '',
-          idProofUrl: response.data.idProofUrl || prev.idProofUrl || '',
-          addressProofUrl: response.data.addressProofUrl || prev.addressProofUrl || ''
+          idProofUrl: response.data.idProofUrl || prev.idProofUrl || ''
         }));
         
         // Check if documents are already complete and user was redirected from rent button
         const returnToProperty = localStorage.getItem('returnToProperty');
-        // Only require ID proof - address proof and emergency contact are optional
+        // Only require ID proof
         const hasRequiredDocuments = !!(response.data.idProofUrl);
         
         if (returnToProperty && hasRequiredDocuments) {
@@ -412,7 +397,7 @@ export default function RentalDocuments({ uid }) {
       {success && (
         <div className="success-message">
           ✓ Documents saved successfully! 
-          {localStorage.getItem('returnToProperty') && !!(formData.idProofUrl && formData.addressProofUrl) ? 
+          {localStorage.getItem('returnToProperty') && !!(formData.idProofUrl) ? 
             <span>Documents are complete! Redirecting to property...</span>
             : 
             <span>You can now proceed with your rental booking.</span>
@@ -480,9 +465,9 @@ export default function RentalDocuments({ uid }) {
         </div>
       )}
 
-      {!loading && localStorage.getItem('returnToProperty') && !(formData.idProofUrl && formData.addressProofUrl) && (
+      {!loading && localStorage.getItem('returnToProperty') && !(formData.idProofUrl) && (
         <div className="warning-message">
-          Please fill in all required documents before proceeding with your rental booking. This is required to complete your rental application.
+          Please upload your ID document before proceeding with your rental booking. This is required to complete your rental application.
         </div>
       )}
 
@@ -538,28 +523,7 @@ export default function RentalDocuments({ uid }) {
             </div>
           </div>
 
-          <div className="form-section">
-            <h3>Emergency Contact</h3>
-            
-            <div className="form-group">
-              <label>Emergency Contact Name</label>
-              <input
-                type="text"
-                value={formData.emergencyContactName}
-                onChange={(e) => handleInputChange('emergencyContactName', e.target.value)}
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Emergency Contact Phone</label>
-              <input
-                type="tel"
-                value={formData.emergencyContactPhone}
-                onChange={(e) => handleInputChange('emergencyContactPhone', e.target.value)}
-              />
-            </div>
-          </div>
-
+          
           <div className="form-section">
             <h3>Document Upload</h3>
             
@@ -621,48 +585,9 @@ export default function RentalDocuments({ uid }) {
               )}
             </div>
 
-            <div className="upload-group">
-              <label>Address Proof *</label>
-              <input
-                type="file"
-                accept=".pdf,.jpg,.jpeg,.png"
-                onChange={(e) => handleFileUpload('addressProof', e.target.files[0])}
-                disabled={uploadProgress.addressProof > 0}
-              />
-              <DocumentStatusDisplay 
-                documentStatus={documentStatuses.addressProof}
-                documentType="addressProof"
-                uploadProgress={uploadProgress.addressProof}
-              />
-              {documentStatuses.addressProof && (
-                <div className="document-summary">
-                  {formatVerificationStatus(documentStatuses.addressProof.status, documentStatuses.addressProof.createdAt).icon} 
-                  {formatVerificationStatus(documentStatuses.addressProof.status, documentStatuses.addressProof.createdAt).text}
-                  {documentStatuses.addressProof.reason && (
-                    <span className="status-reason">- {getStatusDescription(documentStatuses.addressProof.status, documentStatuses.addressProof.reason)}</span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteDocument(documentStatuses.addressProof.documentId, 'addressProof')}
-                    style={{
-                      marginLeft: '10px',
-                      padding: '4px 8px',
-                      backgroundColor: '#dc3545',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontSize: '12px'
-                    }}
-                  >
-                    Delete
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
+                      </div>
 
-          {formData.idProofUrl && formData.addressProofUrl && (
+          {formData.idProofUrl && (
             <div className="documents-overview">
               <h4>📋 Document Verification Status</h4>
               <div className="status-grid">
@@ -672,17 +597,6 @@ export default function RentalDocuments({ uid }) {
                     <span className={`status ${documentStatuses.idProof.status}`}>
                       {formatVerificationStatus(documentStatuses.idProof.status, documentStatuses.idProof.createdAt).icon} 
                       {formatVerificationStatus(documentStatuses.idProof.status, documentStatuses.idProof.createdAt).text}
-                    </span>
-                  ) : (
-                    <span className="status pending">?? Pending Verification</span>
-                  )}
-                </div>
-                <div className="status-item">
-                  <span className="label">Address Proof:</span>
-                  {documentStatuses.addressProof ? (
-                    <span className={`status ${documentStatuses.addressProof.status}`}>
-                      {formatVerificationStatus(documentStatuses.addressProof.status, documentStatuses.addressProof.createdAt).icon} 
-                      {formatVerificationStatus(documentStatuses.addressProof.status, documentStatuses.addressProof.createdAt).text}
                     </span>
                   ) : (
                     <span className="status pending">?? Pending Verification</span>

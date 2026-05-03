@@ -759,7 +759,6 @@ const schemas = {
   // Document validation schema
   document: () => new ValidationSchema()
     .file('idProof', { maxSizeMB: 2, formats: ['document'] })
-    .file('addressProof', { maxSizeMB: 2, formats: ['document'] })
     .file('photo', { maxSizeMB: 1, formats: ['image'] })
 };
 
