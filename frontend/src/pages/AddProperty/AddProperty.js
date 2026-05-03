@@ -465,7 +465,8 @@ export default function AddPropertyPage() {
     } finally {
       setPredictionLoading(false);
     }
-  }, [city, bedrooms, bathrooms, squareFootage, furnishing, propertyAge, ptype, selectedAmenities]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [city, bedrooms, bathrooms, squareFootage, furnishing, propertyAge, ptype, selectedAmenities]);
 
   // Real-time prediction - trigger every time required fields change
   useEffect(() => {
@@ -489,7 +490,8 @@ export default function AddPropertyPage() {
     // ✅ Added missing dependencies: propertyAge, selectedAmenities
     // ✅ Removed showPrediction from deps (it's only read, not needed for effect)
     // ✅ Keep predictRent (it's stable now after fixing its deps)
-  }, [city, ptype, bedrooms, bathrooms, squareFootage, furnishing, propertyAge, selectedAmenities, predictionLoading, predictRent]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [city, ptype, bedrooms, bathrooms, squareFootage, furnishing, propertyAge, selectedAmenities, predictionLoading, predictRent]);
 
   // Reset userManuallyChangedRent when property fields change
   useEffect(() => {
