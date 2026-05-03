@@ -491,7 +491,7 @@ export default function AddPropertyPage() {
     // ✅ Removed showPrediction from deps (it's only read, not needed for effect)
     // ✅ Keep predictRent (it's stable now after fixing its deps)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [city, ptype, bedrooms, bathrooms, squareFootage, furnishing, propertyAge, selectedAmenities, predictionLoading, predictRent]);
+}, [city, ptype, bedrooms, bathrooms, squareFootage, furnishing, propertyAge, selectedAmenities.length, predictionLoading, predictRent]);
 
   // Reset userManuallyChangedRent when property fields change
   useEffect(() => {
