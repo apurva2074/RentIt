@@ -41,18 +41,20 @@ service cloud.firestore {
       allow create: if isAuthenticated() && 
                        isOwner(userId) &&
                        request.resource.data.keys().hasAll(['name', 'email', 'role']) &&
-                       request.resource.data.keys().hasOnly(['name', 'email', 'role', 'createdAt']) &&
+                       request.resource.data.keys().hasOnly(['name', 'email', 'role', 'createdAt', 'publicKey']) &&
                        isValidRole(request.resource.data.role) &&
                        request.resource.data.name is string &&
                        request.resource.data.email is string &&
-                       request.resource.data.createdAt is timestamp;
+                       request.resource.data.createdAt is timestamp &&
+                       (request.resource.data.publicKey is string || request.resource.data.publicKey == null);
       
       // Update: Only own document, but cannot change role
       allow update: if isOwner(userId) &&
-                       request.resource.data.keys().hasOnly(['name', 'email']) &&
+                       request.resource.data.keys().hasOnly(['name', 'email', 'publicKey']) &&
                        (!request.resource.data.keys().hasAll(['role']) || resource.data.role == request.resource.data.role) &&
                        (request.resource.data.name is string || request.resource.data.name == null) &&
-                       (request.resource.data.email is string || request.resource.data.email == null);
+                       (request.resource.data.email is string || request.resource.data.email == null) &&
+                       (request.resource.data.publicKey is string || request.resource.data.publicKey == null);
       
       // Delete: Only own document
       allow delete: if isOwner(userId);
@@ -168,26 +170,20 @@ service cloud.firestore {
 
     // MESSAGES SUBCOLLECTION
     match /chats/{chatId}/messages/{messageId} {
-      // Read: Only chat participants can read messages
       allow read: if isAuthenticated() && 
-                     isParticipant(get(/databases/$(database)/documents/chats/$(chatId)).data.participants);
-      
-      // Create: Only authenticated users can create messages and must be the sender
-      allow create: if isAuthenticated() &&
-                       request.resource.data.senderId == request.auth.uid &&
-                       request.resource.data.keys().hasAll(['chatId', 'senderId', 'message', 'timestamp']) &&
-                       request.resource.data.keys().hasOnly(['chatId', 'senderId', 'message', 'timestamp', 'read', 'readAt', 'edited', 'editedAt', 'deleted', 'deletedAt', 'senderRole']) &&
-                       request.resource.data.chatId is string &&
-                       request.resource.data.message is string &&
-                       request.resource.data.timestamp is timestamp &&
-                       // Verify sender is a participant in the chat using path parameter
-                       request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
-      
-      // Update: Messages are immutable - no updates allowed
-      allow update: if false;
-      
-      // Delete: Only sender can delete their own messages
-      allow delete: if isAuthenticated() && resource.data.senderId == request.auth.uid;
+        (resource.data.senderId == request.auth.uid || 
+         isParticipant(get(/databases/$(database)/documents/chats/$(chatId)).data.participants));
+      allow create: if isAuthenticated() && request.resource.data.senderId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // ── MESSAGES COLLECTION GROUP (for unread queries) ────────────────
+    match /{path=**}/messages/{messageId} {
+      allow read: if isAuthenticated() && 
+        resource.data.senderId != request.auth.uid &&
+        resource.data.read == false &&
+        exists(/databases/$(database)/documents/chats/$(resource.data.chatId)) &&
+        isParticipant(get(/databases/$(database)/documents/chats/$(resource.data.chatId)).data.participants);
     }
 
     // DENY ALL OTHER ACCESS
