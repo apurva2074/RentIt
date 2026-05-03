@@ -114,6 +114,7 @@ export default function AddPropertyPage() {
   const [showPrediction, setShowPrediction] = useState(false);
   const [predictionLoading, setPredictionLoading] = useState(false);
   const [predictionError, setPredictionError] = useState("");
+  const [userManuallyChangedRent, setUserManuallyChangedRent] = useState(false);
 
   /* ================= AMENITIES ================= */
   const [selectedAmenities, setSelectedAmenities] = useState([]);
@@ -258,7 +259,10 @@ export default function AddPropertyPage() {
       case 'bedrooms': setBedrooms(value); break;
       case 'bathrooms': setBathrooms(value); break;
       case 'squareFootage': setSquareFootage(value); break;
-      case 'rentMonthly': setRentMonthly(value); break;
+      case 'rentMonthly': 
+      setRentMonthly(value);
+      setUserManuallyChangedRent(true);
+      break;
       case 'rentPerPerson': setRentPerPerson(value); break;
       case 'securityDeposit': setSecurityDeposit(value); break;
       case 'availableDate': setAvailableDate(value); break;
@@ -372,7 +376,13 @@ export default function AddPropertyPage() {
     }
 
     // Only predict for Mumbai areas
-    const mumbaiAreas = ['mumbai', 'bombay', 'south mumbai', 'bandra', 'andheri', 'juhu', 'worli', 'powai', 'goregaon', 'borivali', 'kandivali', 'dahisar', 'mulund', 'thane', 'navi mumbai', 'vashi', 'nerul'];
+    const mumbaiAreas = [
+      'mumbai', 'bombay', 'south mumbai', 'bandra', 'andheri', 'juhu', 'worli', 'powai', 
+      'goregaon', 'borivali', 'kandivali', 'dahisar', 'mulund', 'thane', 'navi mumbai', 
+      'vashi', 'nerul', 'chembur', 'ghatkopar', 'vikhroli', 'kanjurmarg', 'bhandup', 
+      'kurla', 'sion', 'matunga', 'dadar', 'parel', 'lower parel', 'prabhadevi', 
+      'mahim', 'santacruz', 'vile parle', 'khar', 'jogeshwari', 'malad', 'kandivali'
+    ];
     const isMumbai = mumbaiAreas.some(area => city.toLowerCase().includes(area)) || 
                      city.toLowerCase().includes('mumbai') || 
                      city.toLowerCase().includes('bombay');
@@ -406,7 +416,7 @@ export default function AddPropertyPage() {
         bathrooms: parseInt(bathrooms),
         squareFootage: parseInt(squareFootage),
         furnishing: furnishing,
-        propertyAge: propertyAge ? parseInt(propertyAge) : 2,
+        propertyAge: propertyAge !== undefined && propertyAge !== null && propertyAge !== '' ? parseInt(propertyAge) : 2,
         amenitiesCount: selectedAmenities.length || 0
       };
 
@@ -426,6 +436,17 @@ export default function AddPropertyPage() {
         setShowPrediction(true);
         console.log('Prediction successful:', response.data);
         console.log('Predicted rent:', response.data.predicted_rent);
+        
+        // Smart override: Ask user to update manual rent if difference is significant
+        if (userManuallyChangedRent && rentMonthly && Math.abs(parseInt(rentMonthly) - response.data.predicted_rent) > 0.1 * response.data.predicted_rent) {
+          const shouldOverride = window.confirm(
+            `AI suggests ₹${response.data.predicted_rent.toLocaleString('en-IN')}/month. Your current rent is ₹${parseInt(rentMonthly).toLocaleString('en-IN')}/month.\n\nWould you like to update to the AI suggestion?` 
+          );
+          if (shouldOverride) {
+            setRentMonthly(response.data.predicted_rent.toString());
+            setUserManuallyChangedRent(false);
+          }
+        }
       } else {
         console.log('Prediction failed - no predicted_rent in response');
         setPredictionError("Failed to get rent prediction");
@@ -446,21 +467,35 @@ export default function AddPropertyPage() {
     }
   }, [city, bedrooms, bathrooms, squareFootage, furnishing, propertyAge, ptype, selectedAmenities]);
 
-  // Real-time prediction - only trigger once when all required fields are filled
+  // Real-time prediction - trigger every time required fields change
   useEffect(() => {
-    // Check if we have enough data for prediction
+    // Check if we have all required data for a prediction
     const hasRequiredData = city && ptype && bedrooms && bathrooms && squareFootage && furnishing;
     
-    // Only predict if we have all required data AND we haven't predicted yet
-    if (hasRequiredData && !predictionLoading && !showPrediction) {
+    if (hasRequiredData && !predictionLoading) {
+      // Clear any existing timer
       const timer = setTimeout(() => {
         predictRent();
-      }, 1500); // Slightly longer debounce to avoid excessive calls
+      }, 800); // 0.8 second debounce
 
       return () => clearTimeout(timer);
+    } else {
+      // Clear prediction if required data is missing
+      if (showPrediction) {
+        setShowPrediction(false);
+        setPredictedRent(null);
+      }
     }
-  }, [city, ptype, bedrooms, bathrooms, squareFootage, furnishing, predictRent, predictionLoading, showPrediction]);
+    // ✅ Added missing dependencies: propertyAge, selectedAmenities
+    // ✅ Removed showPrediction from deps (it's only read, not needed for effect)
+    // ✅ Keep predictRent (it's stable now after fixing its deps)
+  }, [city, ptype, bedrooms, bathrooms, squareFootage, furnishing, propertyAge, selectedAmenities, predictionLoading, predictRent]);
 
+  // Reset userManuallyChangedRent when property fields change
+  useEffect(() => {
+    // When user changes core property details, assume they want fresh prediction and reset manual override flag
+    setUserManuallyChangedRent(false);
+  }, [city, ptype, bedrooms, bathrooms, squareFootage, furnishing, propertyAge]);
 
   /* ================= SUBMIT ================= */
   const handleSubmit = async (e) => {
@@ -953,20 +988,29 @@ export default function AddPropertyPage() {
                       <div className="prediction-amount">
                         Rs{predictedRent.toLocaleString('en-IN')}/month
                       </div>
+                      {rentMonthly && parseInt(rentMonthly) !== predictedRent && (
+                        <div className={`comparison-badge ${parseInt(rentMonthly) > predictedRent ? 'higher' : 'lower'}`}>
+                          {parseInt(rentMonthly) > predictedRent 
+                            ? `⚠️ Your rent is ₹${(parseInt(rentMonthly) - predictedRent).toLocaleString('en-IN')} higher than estimate` 
+                            : `✨ Your rent is ₹${(predictedRent - parseInt(rentMonthly)).toLocaleString('en-IN')} lower than estimate` 
+                          }
+                        </div>
+                      )}
                       <div className="prediction-actions">
-                        <button
+                        <button 
                           type="button"
-                          className="btn-use-prediction"
+                          className="btn-primary btn-use-prediction"
                           onClick={() => {
-                            // Don't auto-fill, just hide the prediction
+                            setRentMonthly(predictedRent.toString());
                             setShowPrediction(false);
+                            setPredictionError(""); // clear any old error
                           }}
                         >
-                          Got it
+                          Use This Rent
                         </button>
-                        <button
+                        <button 
                           type="button"
-                          className="btn-dismiss-prediction"
+                          className="btn-secondary"
                           onClick={() => setShowPrediction(false)}
                         >
                           Dismiss
@@ -978,11 +1022,12 @@ export default function AddPropertyPage() {
                     </div>
                   )}
                   
-                  {/* Real-time prediction loading indicator */}
+                  {/* Real-time prediction loading shimmer effect */}
                   {predictionLoading && (
-                    <div className="prediction-loading">
-                      <div className="loading-spinner"></div>
-                      <span>Calculating rent based on your property details...</span>
+                    <div className="prediction-shimmer">
+                      <div className="shimmer-line shimmer-title"></div>
+                      <div className="shimmer-line shimmer-amount"></div>
+                      <div className="shimmer-line shimmer-actions"></div>
                     </div>
                   )}
                   
@@ -1068,11 +1113,12 @@ export default function AddPropertyPage() {
                     </div>
                   )}
                   
-                  {/* Real-time prediction loading indicator */}
+                  {/* Real-time prediction loading shimmer effect */}
                   {predictionLoading && (
-                    <div className="prediction-loading">
-                      <div className="loading-spinner"></div>
-                      <span>Calculating rent based on your property details...</span>
+                    <div className="prediction-shimmer">
+                      <div className="shimmer-line shimmer-title"></div>
+                      <div className="shimmer-line shimmer-amount"></div>
+                      <div className="shimmer-line shimmer-actions"></div>
                     </div>
                   )}
                   
