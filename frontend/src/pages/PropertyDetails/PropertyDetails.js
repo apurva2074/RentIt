@@ -322,17 +322,18 @@ export default function PropertyDetails() {
     console.log("🔍 Property:", { property: !!property, propertyId: id });
     console.log("🔍 Current booking status:", rentRequestStatus);
     
+    // TEMPORARY DIAGNOSTIC LOGGING
+    console.log('🔍 RENT BUTTON: Tenant documents state:', {
+      idProofUrl: user?.idProofUrl,
+      fullName: user?.fullName,
+      phone: user?.phone,
+      documents: user?.documents,
+      isProfileComplete: !!user?.fullName && !!user?.phone && !!user?.idProofUrl
+    });
+    
     if (!user) {
       console.log("No user found, redirecting to login");
       navigate('/login');
-      return;
-    }
-    
-    // Document verification check
-    if (!user.documents || user.documents.length === 0) {
-      alert("Please fill required documents before booking");
-      localStorage.setItem("redirectAfterDocs", id);
-      navigate('/dashboard?tab=rental-documents');
       return;
     }
     
@@ -344,11 +345,17 @@ export default function PropertyDetails() {
     // 🎯 CONDITIONAL WORKFLOW - Check booking status FIRST
     console.log("🔍 Checking booking status for navigation decision");
     
-    // If tenant profile is incomplete
+    // ✅ Only rely on backend API for document verification
     try {
       console.log("Checking tenant documents for booking...");
       const documentCheck = await checkTenantDocuments(user.uid);
       console.log("Document check result:", documentCheck);
+      console.log("🔍 DOCUMENT CHECK DETAILS:", {
+        success: documentCheck?.success,
+        hasRequiredDocuments: documentCheck?.data?.hasRequiredDocuments,
+        idProofUrl: documentCheck?.data?.idProofUrl,
+        message: documentCheck?.data?.message
+      });
       
       if (!documentCheck.success || !documentCheck.data.hasRequiredDocuments) {
         console.log("Documents incomplete - Block booking and redirect to documents");

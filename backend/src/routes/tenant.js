@@ -46,12 +46,11 @@ module.exports = ({ admin, db }) => {
 
       const tenantData = tenantSnap.data();
       
-      // Check if ANY required field is filled (name, date of birth, address, or government ID)
+      // Check if ALL required fields are present for rental validation
       const hasRequiredDocuments = !!(
-        tenantData.fullName || 
-        tenantData.dob || 
-        tenantData.address || 
-        tenantData.idType
+        tenantData.fullName && 
+        tenantData.phone && 
+        tenantData.idProofUrl
       );
       
       return res.status(200).json({
@@ -59,7 +58,7 @@ module.exports = ({ admin, db }) => {
         data: {
           hasRequiredDocuments,
           idProofUrl: tenantData.idProofUrl || null,
-          message: hasRequiredDocuments ? "Tenant has provided required information" : "Please provide at least one required field (name, date of birth, address, or government ID)"
+          message: hasRequiredDocuments ? "Tenant has all required documents for rental" : "Please complete your profile (name, phone, and government ID) before renting"
         }
       });
 
