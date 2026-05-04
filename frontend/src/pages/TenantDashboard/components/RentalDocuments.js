@@ -78,13 +78,16 @@ export default function RentalDocuments({ uid }) {
       const response = await apiCall('/users/profile');
       console.log("User profile response:", response);
       
-      if (response && (response.name || response.phone)) {
+      if (response && (response.name || response.phone || (response.data && (response.data.name || response.data.phone)))) {
         setFormData(prev => ({
           ...prev,
-          fullName: response.data.name || '',
-          phone: response.data.phone || ''
+          fullName: response.name || response.data?.name || '',
+          phone: response.phone || response.data?.phone || ''
         }));
-        console.log("Pre-filled user data:", { name: response.name, phone: response.phone });
+        console.log("Pre-filled user data:", { 
+          name: response.name || response.data?.name, 
+          phone: response.phone || response.data?.phone 
+        });
       }
     } catch (error) {
       console.error('Error fetching user profile:', error);
@@ -99,7 +102,7 @@ export default function RentalDocuments({ uid }) {
       const response = await getDocumentsStatus();
       console.log("Document status response:", response);
       
-      if (response.success && response.documents) {
+      if (response && response.success && response.documents && Array.isArray(response.documents)) {
         const statuses = {};
         let hasFailed = false;
         let hasApproved = false;
@@ -159,7 +162,7 @@ export default function RentalDocuments({ uid }) {
       const response = await apiCall(`/tenant/details/${uid}`);
       console.log("Documents response:", response);
       
-      if (response.success && response.data) {
+      if (response && response.success && response.data) {
         setFormData(prev => ({
           fullName: response.data.fullName || prev.fullName || '',
           dob: response.data.dob || prev.dob || '',
@@ -287,6 +290,9 @@ export default function RentalDocuments({ uid }) {
         // Trigger immediate status fetch to show verification progress
         fetchDocumentStatuses();
         
+        // Refresh tenant details to get updated idProofUrl in tenantDetails collection
+        await fetchExistingDocuments();
+        
         // Show success message
         setSuccess(true);
         setError('');
@@ -297,7 +303,7 @@ export default function RentalDocuments({ uid }) {
         // Reset upload progress
         setUploadProgress(prev => ({ ...prev, [fileType]: 0 }));
         
-        console.log('Upload successful, verification completed');
+        console.log('Upload successful, verification completed - tenant profile refreshed');
       } else {
         console.log('Upload failed, not updating UI:', result);
         setUploadProgress(prev => ({ ...prev, [fileType]: 0 }));

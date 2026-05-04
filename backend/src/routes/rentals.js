@@ -58,12 +58,56 @@ module.exports = ({ admin, db }) => {
 
       const tenantData = tenantDetailsSnap.data();
       
+      // TEMPORARY DIAGNOSTIC LOGGING
+      console.log('🔍 TENANT VALIDATION DATA:', {
+        uid: tenantId,
+        fullName: tenantData.fullName,
+        phone: tenantData.phone,
+        idProofUrl: tenantData.idProofUrl,
+        fullObject: JSON.stringify(tenantData, null, 2)
+      });
+      
       // Validate required tenant profile fields before allowing rental request
-      const hasRequiredProfile = !!(
+      let hasRequiredProfile = !!(
         tenantData.fullName && 
         tenantData.phone && 
         tenantData.idProofUrl
       );
+      
+      // FALLBACK: Check tenants collection if idProofUrl missing from tenantDetails
+      if (!hasRequiredProfile && (!tenantData.idProofUrl || tenantData.idProofUrl === '')) {
+        console.log('🔍 FALLBACK: Checking tenants collection for idProofUrl');
+        try {
+          const tenantsRef = db.collection('tenants').doc(tenantId);
+          const tenantsSnap = await tenantsRef.get();
+          
+          if (tenantsSnap.exists) {
+            const tenantsData = tenantsSnap.data();
+            console.log('🔍 TENANTS COLLECTION DATA:', {
+              idProofVerificationStatus: tenantsData.idProofVerificationStatus,
+              hasVerification: !!tenantsData.idProofVerificationStatus
+            });
+            
+            // If tenants collection has verified ID proof, consider profile complete
+            if (tenantsData.idProofVerificationStatus === 'approved') {
+              hasRequiredProfile = !!(
+                tenantData.fullName && 
+                tenantData.phone
+              );
+              console.log('🔍 FALLBACK PASSED: Using tenants collection verification');
+            }
+          }
+        } catch (fallbackError) {
+          console.error('🔍 FALLBACK ERROR:', fallbackError);
+        }
+      }
+      
+      console.log('🔍 VALIDATION RESULT:', {
+        hasRequiredProfile,
+        fullName: !!tenantData.fullName,
+        phone: !!tenantData.phone,
+        idProofUrl: !!tenantData.idProofUrl
+      });
       
       if (!hasRequiredProfile) {
         return res.status(400).json({

@@ -152,6 +152,18 @@ router.post('/upload-document-enhanced', verifyTokenMiddleware, upload.single('f
       verifiedAt: new Date()
     });
 
+    // STEP 6: Also save to tenantDetails collection for rental validation
+    if (documentType === 'idProof') {
+      console.log('🔍 UPDATING TENANT DETAILS with idProofUrl');
+      const tenantDetailsRef = db.collection('tenantDetails').doc(userId);
+      await tenantDetailsRef.set({
+        idProofUrl: documentRecord.documentUrl,
+        idProofVerified: true,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      console.log('✅ TENANT DETAILS UPDATED with idProofUrl:', documentRecord.documentUrl);
+    }
+
     console.log("UPLOAD COMPLETED - Enhanced Tenant Upload");
 
     res.json({
