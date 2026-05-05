@@ -69,6 +69,7 @@
 /* Cards */
 .booking-summary-card,
 .payment-details-card,
+.payment-breakdown-card,
 .payment-method-card {
   background: white;
   border-radius: 16px;
@@ -96,6 +97,7 @@
 }
 
 .payment-details-card h2,
+.payment-breakdown-card h3,
 .payment-method-card h2 {
   color: #2c3e50;
   margin-bottom: 24px;
@@ -108,6 +110,150 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.breakdown-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid #ecf0f1;
+  font-size: 16px;
+}
+
+.breakdown-item.total {
+  font-weight: 700;
+  font-size: 18px;
+  color: #2c3e50;
+  border-top: 2px solid #3498db;
+  padding-top: 16px;
+  margin-top: 8px;
+}
+
+.tooltip-icon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  background: #6c757d;
+  color: white;
+  border-radius: 50%;
+  text-align: center;
+  line-height: 16px;
+  font-size: 10px;
+  margin-left: 8px;
+  cursor: help;
+  position: relative;
+}
+
+.tooltip-icon:hover::after {
+  content: attr(title);
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #333;
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  white-space: nowrap;
+  font-size: 12px;
+  z-index: 1000;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+.tooltip-icon:hover::before {
+  content: '';
+  position: absolute;
+  bottom: 110%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #333;
+  z-index: 1000;
+}
+
+.payment-note {
+  color: #6c757d;
+  font-size: 14px;
+  margin: 16px 0 0;
+  font-style: italic;
+}
+
+/* Payment Error Card */
+.payment-error-card {
+  background: #fff5f5;
+  border: 1px solid #fed7d7;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.error-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  color: #e53e3e;
+  font-size: 16px;
+}
+
+.error-icon {
+  font-size: 20px;
+}
+
+.retry-button {
+  background: #e53e3e;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.retry-button:hover:not(:disabled) {
+  background: #c53030;
+}
+
+.retry-button:disabled {
+  background: #a0aec0;
+  cursor: not-allowed;
+}
+
+/* Payment Deferred Banner */
+.payment-deferred-banner {
+  background: linear-gradient(135deg, #fff3cd, #ffeaa7);
+  border: 1px solid #ffc107;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.deferred-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.deferred-icon {
+  font-size: 32px;
+  color: #856404;
+}
+
+.deferred-text h4 {
+  color: #856404;
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.deferred-text p {
+  color: #856404;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .payment-row {

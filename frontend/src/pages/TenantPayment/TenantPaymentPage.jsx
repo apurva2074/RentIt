@@ -14,6 +14,9 @@ export default function TenantPaymentPage() {
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('upi');
+  const [verificationTriggered, setVerificationTriggered] = useState(false);
+  const [error, setError] = useState(null);
+  const [polling, setPolling] = useState(false);
 
   useEffect(() => {
     // Check if bookingId exists
@@ -60,6 +63,51 @@ export default function TenantPaymentPage() {
 
     fetchBooking();
   }, [user, authLoading, bookingId, navigate]);
+
+  // Payment status polling function
+  const startPaymentPolling = (orderId) => {
+    console.log('🔍 Starting payment status polling for order:', orderId);
+    setPolling(true);
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch(`${process.env.REACT_APP_API_BASE || 'http://localhost:5000'}/api/payments/status/${orderId}`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${await user.getIdToken()}`
+          }
+        });
+
+        const result = await response.json();
+        
+        if (result.success) {
+          console.log('🔍 Payment status poll result:', result.status);
+          
+          if (result.status === 'completed' || result.status === 'captured') {
+            clearInterval(pollInterval);
+            setPolling(false);
+            setError(null);
+            alert('Payment Successful! Your booking has been confirmed.');
+            navigate(`/tenant/agreement/${bookingId}`);
+          } else if (result.status === 'failed') {
+            clearInterval(pollInterval);
+            setPolling(false);
+            setError('Payment failed. Please try again or use a different payment method.');
+            setProcessing(false);
+          }
+        }
+      } catch (error) {
+        console.error('🔍 Payment status poll error:', error);
+      }
+    }, 3000); // Poll every 3 seconds
+
+    // Stop polling after 2 minutes
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      setPolling(false);
+      console.log('🔍 Payment polling timeout reached');
+    }, 120000);
+  };
 
   const getRazorpayMethodConfig = () => {
     switch (selectedPaymentMethod) {
@@ -154,6 +202,8 @@ export default function TenantPaymentPage() {
     console.log('🔍 Selected payment method:', selectedPaymentMethod);
 
     setProcessing(true);
+    setVerificationTriggered(false);
+    setError(null);
     try {
       // Step 1: Call backend to create Razorpay order
       console.log('🔍 Creating Razorpay order for booking:', bookingId);
@@ -175,6 +225,9 @@ export default function TenantPaymentPage() {
       }
 
       console.log('🔍 Razorpay order created:', result);
+
+      // Start payment status polling
+      startPaymentPolling(result.orderId);
 
       // Step 2: Initialize Razorpay checkout
       const options = {
@@ -199,6 +252,8 @@ export default function TenantPaymentPage() {
           type: "security_deposit"
         },
         handler: async function (response) {
+          if (verificationTriggered) return;
+          setVerificationTriggered(true);
           console.log('🔍 Razorpay payment successful:', response);
           
           try {
@@ -218,31 +273,69 @@ export default function TenantPaymentPage() {
             const verifyResult = await verifyResponse.json();
             
             if (verifyResult.success) {
+              setError(null);
               alert('Payment Successful! Your booking has been confirmed.');
               navigate(`/tenant/agreement/${bookingId}`);
             } else {
-              alert('Payment verification failed. Please contact support.');
+              const errorMessage = verifyResult.message || 'Payment verification failed. Please try again.';
+              setError(errorMessage);
+              setVerificationTriggered(false); // Allow retry
+              setProcessing(false);
             }
           } catch (error) {
             console.error('Payment verification error:', error);
-            alert('Payment verification failed. Please contact support.');
+            const errorMessage = error.response?.data?.message || 
+                               error.message || 
+                               'Payment verification failed. Please try again.';
+            setError(errorMessage);
+            setVerificationTriggered(false); // Allow retry
+            setProcessing(false);
           }
         },
         prefill: {
-          name: user.displayName || user.email,
+          name: user.displayName || user.email.split('@')[0],
           email: user.email,
           contact: user.phoneNumber || ''
         },
         theme: {
-          color: "#3399cc"
+          color: "#007bff",
+          backdrop_color: "#ffffff"
         },
         modal: {
           ondismiss: function() {
-            console.log('🔍 Razorpay modal dismissed');
+            if (verificationTriggered) return;
+            console.log('🔍 Razorpay modal dismissed without payment');
+            // Optionally call an "abandon" endpoint for analytics
+            fetch(`${process.env.REACT_APP_API_BASE || 'http://localhost:5000'}/api/payments/abandon`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${user.getIdToken()}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ 
+                bookingId,
+                orderId: result.orderId,
+                reason: 'modal_dismissed'
+              })
+            }).catch(console.error);
             setProcessing(false);
           },
           escape: function() {
-            console.log('🔍 Razorpay modal escaped');
+            if (verificationTriggered) return;
+            console.log('🔍 Razorpay modal escaped without payment');
+            // Optionally call an "abandon" endpoint for analytics
+            fetch(`${process.env.REACT_APP_API_BASE || 'http://localhost:5000'}/api/payments/abandon`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${user.getIdToken()}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ 
+                bookingId,
+                orderId: result.orderId,
+                reason: 'modal_escaped'
+              })
+            }).catch(console.error);
             setProcessing(false);
           }
         }
@@ -256,7 +349,7 @@ export default function TenantPaymentPage() {
 
     } catch (error) {
       console.error("Payment error:", error);
-      alert('Payment failed. Please try again.');
+      setError('Payment failed. Please try again.');
       setProcessing(false);
     }
   };
@@ -303,6 +396,10 @@ export default function TenantPaymentPage() {
 
   const totalAmount = calculateTotalAmount();
 
+  // Check if payment is deferred
+  const isPaymentDeferred = booking?.booking?.paymentDeferred;
+  const paymentDueDate = booking?.booking?.paymentDueDate;
+
   return (
     <>
       <Header />
@@ -345,6 +442,51 @@ export default function TenantPaymentPage() {
               </div>
             </div>
           </div>
+
+          {/* Payment Deferred Banner */}
+          {isPaymentDeferred && (
+            <div className="payment-deferred-banner">
+              <div className="deferred-content">
+                <span className="deferred-icon">⏰</span>
+                <div className="deferred-text">
+                  <h4>Payment Deferred</h4>
+                  <p>Your payment has been deferred. Please complete the payment by {new Date(paymentDueDate).toLocaleDateString('en-IN')}.</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Payment Breakdown */}
+          <div className="payment-breakdown-card">
+            <h3>Payment Breakdown</h3>
+            <div className="breakdown-item">
+              <span>
+                Security Deposit 
+                <span className="tooltip-icon" title="Refundable at the end of tenancy, subject to property condition">ⓘ</span>
+              </span>
+              <span>₹{booking.booking.proposedDeposit?.toLocaleString() || 0}</span>
+            </div>
+            <div className="breakdown-item total">
+              <span>Total Amount to Pay</span>
+              <span>₹{(booking.booking.proposedDeposit || 0).toLocaleString()}</span>
+            </div>
+            <p className="payment-note">
+              * Only security deposit is collected now. Monthly rent will be due later.
+            </p>
+          </div>
+
+          {/* Error Display */}
+          {error && (
+            <div className="payment-error-card">
+              <div className="error-content">
+                <span className="error-icon">⚠️</span>
+                <span>{error}</span>
+              </div>
+              <button className="retry-button" onClick={handlePayment} disabled={processing}>
+                Retry Payment
+              </button>
+            </div>
+          )}
 
           {/* Payment Method Selector */}
           <div className="payment-method-card">
@@ -401,12 +543,12 @@ export default function TenantPaymentPage() {
             <button 
               className="proceed-to-pay-btn"
               onClick={handlePayment}
-              disabled={!selectedPaymentMethod || processing}
+              disabled={processing || polling}
             >
-              {processing ? (
+              {processing || polling ? (
                 <>
                   <div className="payment-spinner"></div>
-                  Processing...
+                  {polling ? 'Checking Payment...' : 'Processing...'}
                 </>
               ) : (
                 <>

@@ -9,15 +9,22 @@ const TenantAgreement = () => {
   const { user, loading: authLoading } = useAuth();
   const [booking, setBooking] = useState(null);
   const [property, setProperty] = useState(null);
+  // eslint-disable-next-line no-unused-vars
+  const [agreement, setAgreement] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [retryCount, setRetryCount] = useState(0);
   const [accepting, setAccepting] = useState(false);
   const [error, setError] = useState(null);
+  
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY = 1500;
 
   useEffect(() => {
     const fetchBooking = async () => {
       console.log('🔍 Agreement Page - Starting fetch');
       console.log('🔍 Booking ID:', bookingId);
       console.log('🔍 Current User:', user?.uid);
+      console.log('🔍 Retry attempt:', retryCount + 1);
       
       if (!bookingId || !user) {
         console.log('🚨 Missing bookingId or user - staying on page');
@@ -41,22 +48,25 @@ const TenantAgreement = () => {
           console.log('🔍 Response data received:', responseData);
           
           // Handle both structured response and direct booking response
-          let bookingData, propertyData;
+          let bookingData, propertyData, agreementData;
           
           if (responseData.booking) {
             // Structured response: {booking: {...}, property: {...}, agreement: {...}}
             bookingData = responseData.booking;
             propertyData = responseData.property || null;
+            agreementData = responseData.agreement || null;
             console.log('🔍 Using structured response format');
           } else {
             // Direct response: booking data with propertySnapshot included
             bookingData = responseData;
             propertyData = responseData.propertySnapshot || null;
+            agreementData = responseData.agreement || null;
             console.log('🔍 Using direct response format');
           }
           
           console.log('🔍 Booking data:', bookingData);
           console.log('🔍 Property data:', propertyData);
+          console.log('🔍 Agreement data:', agreementData);
           console.log('🔍 Booking status:', bookingData.status);
           
           // Debug: Log all available fields
@@ -76,28 +86,60 @@ const TenantAgreement = () => {
             console.log('🔍 Booking tenantDetails field:', bookingData.tenantDetails);
           }
           
-          // Set booking and property data
+          // Set booking, property, and agreement data
           setBooking(bookingData);
           setProperty(propertyData);
-          console.log('✅ Booking and property loaded for agreement');
+          setAgreement(agreementData);
+          
+          // Check if agreement is already signed and redirect
+          if (agreementData && agreementData.signedAt) {
+            console.log('🔍 Agreement already signed, redirecting to payment page');
+            navigate(`/tenant/payment/${bookingId}`, { replace: true });
+            return;
+          }
+          
+          // Check if booking is already in pending_payment status
+          if (bookingData.status === 'pending_payment') {
+            console.log('🔍 Booking already in pending_payment status, redirecting to payment page');
+            navigate(`/tenant/payment/${bookingId}`, { replace: true });
+            return;
+          }
+          
+          setLoading(false);
+          console.log('✅ Booking, property, and agreement loaded successfully');
           console.log('🔍 DEBUG: Final booking status:', bookingData.status);
           console.log('🔍 DEBUG: Booking data:', bookingData);
-        } else {
-          const errorText = await response.text();
-          console.error('🚨 Failed to fetch booking:', response.status, errorText);
-          // Don't auto-redirect - show error message instead
-          setError(`Failed to load agreement: ${response.status} - ${errorText}`);
+          return; // Success - exit function
         }
-      } catch (error) {
-        console.error('🚨 Error fetching booking:', error);
-        setError('Failed to load agreement. Please try again.');
-      } finally {
-        setLoading(false);
+        
+        // If 404 or other error, retry
+        if (retryCount < MAX_RETRIES) {
+          console.log(`🔄 Retrying in ${RETRY_DELAY}ms... (Attempt ${retryCount + 1}/${MAX_RETRIES})`);
+          setRetryCount(prev => prev + 1);
+          setTimeout(() => fetchBooking(), RETRY_DELAY);
+        } else {
+          console.log('🚨 Max retries reached - giving up');
+          setError('Agreement not found after multiple retries. Please try again later.');
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('🚨 Network error:', err);
+        if (retryCount < MAX_RETRIES) {
+          console.log(`🔄 Retrying in ${RETRY_DELAY}ms... (Attempt ${retryCount + 1}/${MAX_RETRIES})`);
+          setRetryCount(prev => prev + 1);
+          setTimeout(() => fetchBooking(), RETRY_DELAY);
+        } else {
+          console.log('🚨 Max retries reached - giving up');
+          setError('Network error. Please check your connection and try again.');
+          setLoading(false);
+        }
       }
     };
 
-    fetchBooking();
-  }, [bookingId, user, navigate]);
+    if (user && bookingId) {
+      fetchBooking();
+    }
+  }, [user, bookingId, retryCount, navigate]);
 
   const handleAcceptAgreement = async () => {
     console.log('🔍 CRITICAL DEBUG: Agreement acceptance started');
@@ -181,12 +223,12 @@ const TenantAgreement = () => {
           console.log('🔍 CRITICAL DEBUG: Current pathname before navigation:', window.location.pathname);
           
           try {
-            navigate(`/tenant/payment/${bookingId}`);
-            console.log('🔍 CRITICAL DEBUG: React Router navigation called');
+            navigate(`/tenant/payment/${bookingId}`, { replace: true });
+            console.log('🔍 CRITICAL DEBUG: React Router navigation called with replace: true');
           } catch (error) {
             console.error('🔍 CRITICAL DEBUG: React Router navigation failed:', error);
-            // Direct fallback
-            window.location.href = `/tenant/payment/${bookingId}`;
+            // Direct fallback - use replace to prevent back navigation to agreement
+            window.location.replace(`/tenant/payment/${bookingId}`);
           }
         } else {
           console.log('🚨 CRITICAL ERROR: Backend response not ok');

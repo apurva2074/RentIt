@@ -1,0 +1,265 @@
+/* Enhanced Rental Requests UI Styles */
+
+/* Debug test button */
+.debug-test-btn {
+  margin-left: 10px;
+  padding: 5px 10px;
+  font-size: 12px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.debug-test-btn:hover {
+  opacity: 1;
+}
+
+/* Enhanced rental request card */
+.rental-request-card.enhanced-card {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  margin-bottom: 16px;
+  border: 1px solid #e9ecef;
+  transition: all 0.2s ease;
+  animation: fadeIn 0.15s ease-in-out;
+}
+
+.rental-request-card.enhanced-card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+}
+
+/* Enhanced header */
+.request-header.enhanced-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f1f3f4;
+}
+
+.property-title-section {
+  flex: 1;
+}
+
+.property-title-section h3 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #2c3e50;
+  line-height: 1.4;
+}
+
+.tenant-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tenant-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #495057;
+}
+
+.submitted-date {
+  font-size: 12px;
+  color: #6c757d;
+}
+
+/* Enhanced status badge */
+.status-badge.enhanced-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-badge.enhanced-badge.pending {
+  background-color: #fff3e0;
+  color: #f57c00;
+}
+
+/* Expand toggle button */
+.expand-toggle {
+  background: none;
+  border: none;
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #6c757d;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.expand-toggle:hover {
+  background-color: #f8f9fa;
+  color: #495057;
+}
+
+.expand-toggle .chevron {
+  transition: transform 0.2s ease;
+}
+
+.expand-toggle .chevron.expanded {
+  transform: rotate(180deg);
+}
+
+/* Enhanced details */
+.request-details.enhanced-details {
+  margin: 16px 0;
+  padding: 16px;
+  background-color: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #e9ecef;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-item .label {
+  font-size: 12px;
+  color: #6c757d;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.detail-item .value {
+  font-size: 14px;
+  color: #2c3e50;
+  font-weight: 500;
+}
+
+.detail-item .value.rent-amount {
+  color: #28a745;
+  font-weight: 600;
+}
+
+/* Enhanced actions */
+.request-actions.enhanced-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #f1f3f4;
+}
+
+.enhanced-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 80px;
+}
+
+.enhanced-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.reject-btn.enhanced-btn {
+  background-color: #dc3545;
+  color: white;
+}
+
+.reject-btn.enhanced-btn:hover:not(:disabled) {
+  background-color: #c82333;
+  transform: scale(0.98);
+}
+
+.accept-btn.enhanced-btn {
+  background-color: #28a745;
+  color: white;
+}
+
+.accept-btn.enhanced-btn:hover:not(:disabled) {
+  background-color: #218838;
+  transform: scale(0.98);
+}
+
+.warning-icon {
+  margin-left: 5px;
+  font-size: 12px;
+  color: #dc3545;
+}
+
+/* Fade in animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .rental-request-card.enhanced-card {
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  
+  .request-header.enhanced-header {
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .detail-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  
+  .request-actions.enhanced-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .enhanced-btn {
+    width: 100%;
+    padding: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .property-title-section h3 {
+    font-size: 15px;
+  }
+  
+  .tenant-name {
+    font-size: 13px;
+  }
+  
+  .detail-item .value {
+    font-size: 13px;
+  }
+}

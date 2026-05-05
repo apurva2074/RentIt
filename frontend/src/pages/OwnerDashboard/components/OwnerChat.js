@@ -60,10 +60,20 @@ export default function OwnerChat() {
     }
   };
 
+  const getMessagePreview = (message) => {
+    if (!message) return 'No messages yet';
+    if (typeof message === 'string') return message;
+    if (typeof message === 'object') {
+      // Try common property names
+      return message.text || message.message || message.content || JSON.stringify(message);
+    }
+    return 'New message';
+  };
+
   const filteredChats = (chats || []).filter(chat => {
     const tenantName = chat.otherUser?.name || chat.otherUser?.email || 'Unknown';
     const propertyTitle = chat.property?.title || '';
-    const lastMessage = chat.lastMessage || '';
+    const lastMessage = getMessagePreview(chat.lastMessage);
     
     const searchLower = searchTerm.toLowerCase();
     return tenantName.toLowerCase().includes(searchLower) ||
@@ -132,8 +142,8 @@ export default function OwnerChat() {
               >
                 <div className="chat-avatar">
                   <div className="avatar-placeholder">
-                    {chat.otherUser?.name?.charAt(0) || 
-                     chat.otherUser?.email?.charAt(0) || 'T'}
+                    {chat.otherUser?.name ? chat.otherUser.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase() : 
+                     (chat.otherUser?.email?.charAt(0)?.toUpperCase() || 'T')}
                   </div>
                 </div>
                 
@@ -153,11 +163,7 @@ export default function OwnerChat() {
                   </div>
                   
                   <div className="last-message">
-                    {chat.lastMessage ? (
-                      <p className="message-preview">{chat.lastMessage}</p>
-                    ) : (
-                      <p className="no-message">No messages yet</p>
-                    )}
+                    <p className="message-preview">{getMessagePreview(chat.lastMessage)}</p>
                   </div>
                   
                   <div className="chat-meta">

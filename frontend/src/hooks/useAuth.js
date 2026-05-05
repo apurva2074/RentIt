@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../firebase/auth';
+import { initUserEncryption, clearKeys } from '../services/userEncryption';
 
 /**
  * Custom hook to handle Firebase auth state properly and avoid race conditions
@@ -18,12 +19,30 @@ export const useAuth = () => {
     console.log('useAuth - Setting up auth state listener');
     const unsubscribe = onAuthStateChanged(
       auth,
-      (user) => {
+      async (user) => {
         console.log('useAuth - Auth state changed:', { 
           user: user?.email, 
           uid: user?.uid, 
           exists: !!user 
         });
+        
+        if (user) {
+          // Initialize encryption for logged-in user
+          try {
+            const encryptionSetup = await initUserEncryption(user);
+            if (encryptionSetup) {
+              console.log('E2EE keys initialized');
+            } else {
+              console.warn('Failed to initialize E2EE keys');
+            }
+          } catch (error) {
+            console.error('Failed to initialize encryption:', error);
+          }
+        } else {
+          // Clear encryption keys on logout
+          clearKeys();
+        }
+        
         setUser(user);
         setLoading(false);
         setError(null);
@@ -33,6 +52,8 @@ export const useAuth = () => {
         setError(error);
         setLoading(false);
         setUser(null);
+        // Clear encryption keys on auth error
+        clearKeys();
       }
     );
 

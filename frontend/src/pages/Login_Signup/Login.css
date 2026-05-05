@@ -85,6 +85,10 @@
   font-size: 18px;
   margin: 0 0 60px 0;
   opacity: 0.9;
+  color: #1e3a8a !important;
+  text-shadow: none;
+  font-weight: 500;
+  letter-spacing: 0.5px;
 }
 
 .branding-features {
@@ -122,6 +126,7 @@
   font-size: 18px;
   font-weight: 600;
   margin: 0 0 4px 0;
+  color: #1e3a8a !important;
 }
 
 .feature-text p {
@@ -129,6 +134,7 @@
   margin: 0;
   opacity: 0.8;
   line-height: 1.5;
+  color: #1e3a8a !important;
 }
 
 /* Right Side - Login Form */

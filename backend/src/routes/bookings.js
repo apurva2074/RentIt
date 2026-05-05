@@ -386,6 +386,14 @@ module.exports = ({ admin, db }) => {
       const { id } = req.params;
       const userId = req.auth.uid;
 
+      // ✅ Verify owner has bank details
+      const ownerDoc = await db.collection("users").doc(userId).get();
+      if (!ownerDoc.exists || !ownerDoc.data().bankDetails) {
+        return res.status(400).json({
+          message: "Bank details required. Please add your bank details before approving rental requests."
+        });
+      }
+
       const bookingRef = db.collection("bookings").doc(id);
       const bookingSnap = await bookingRef.get();
       

@@ -3,9 +3,11 @@ import { useNavigate, useLocation } from "react-router-dom";
 import "./TenantDashboard.css";
 
 import Header from "../../MyComponent/Header";
+// eslint-disable-next-line no-unused-vars
 import { getWishlist, removeFromWishlist } from "../../services/wishlistService";
 import { getUserDashboard } from "../../services/userDashboardService";
 import { testBackendConnection } from "../../services/userDashboardService";
+// eslint-disable-next-line no-unused-vars
 import { getAllProperties } from "../../services/propertiesService";
 import { checkTenantDocuments } from "../../services/tenantService";
 import TenantChat from "./components/TenantChat";
@@ -14,6 +16,9 @@ import RentalDocuments from "./components/RentalDocuments";
 import "./RentRequests.css";
 import { getAuthToken } from "../../utils/authToken";
 import { useAuth } from "../../hooks/useAuth";
+import { markAllMessagesAsRead } from "../../services/chatService";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { db } from "../../firebase/firestore";
 
 // API service for properties
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:5000';
@@ -82,6 +87,109 @@ export default function TenantDashboard() {
     isLoading: true
   });
 
+  // Real-time agreement status tracking
+  const [agreements, setAgreements] = useState({});
+  
+  // State declarations that were previously scattered
+  const [wishlistedProperties, setWishlistedProperties] = useState([]);
+  const [recentlyViewed, setRecentlyViewed] = useState([]);
+  const [dashboardData, setDashboardData] = useState(null);
+  const [paymentHistory, setPaymentHistory] = useState(null);
+  const [rentRequests, setRentRequests] = useState([]);
+  const [activeTab, setActiveTab] = useState('wishlist');
+  const [rentedPropertyTab, setRentedPropertyTab] = useState('details');
+  const [unreadNotifications, setUnreadNotifications] = useState({});
+
+  // Fetch dashboard data function (moved outside useEffect for reuse)
+  const fetchDashboardData = useCallback(async () => {
+    try {
+      console.log('TenantDashboard - Fetching dashboard data...');
+      
+      // Test backend connectivity first
+      console.log('TenantDashboard - Testing backend connectivity...');
+      const backendTest = await testBackendConnection();
+      if (!backendTest) {
+        console.error('TenantDashboard - Backend connectivity test failed!');
+        return;
+      }
+      
+      const data = await getUserDashboard();
+      console.log('TenantDashboard - Dashboard data received:', data);
+      console.log('TenantDashboard - Active chats count from backend:', data?.activeChatsCount);
+      console.log('TenantDashboard - Wishlist count from backend:', data?.wishlistCount);
+      setDashboardData(data);
+    } catch (error) {
+      console.error('TenantDashboard - Error fetching dashboard data:', error);
+      // Set default values if dashboard API fails
+      setDashboardData({
+        wishlistCount: 0,
+        activeChatsCount: 0,
+        rentedProperty: null,
+        rentAmount: 0,
+        nextRentDueDate: null,
+        rentStatus: 'none',
+        profileCompletion: 0
+      });
+    }
+
+    // Fetch user information via API
+    try {
+      const userResponse = await apiCall('/users/profile');
+      console.log('TenantDashboard - User profile received:', userResponse);
+      setUserInfo(userResponse);
+    } catch (error) {
+      console.error('TenantDashboard - Error fetching user profile:', error);
+    }
+
+    // Check document completion status and show warning if needed
+    try {
+      const docStatus = await checkTenantDocuments();
+      console.log('TenantDashboard - Document status checked:', docStatus);
+      setDocumentStatus({
+        hasDocuments: docStatus.hasDocuments,
+        isLoading: false
+      });
+    } catch (error) {
+      console.error('TenantDashboard - Error checking document status:', error);
+      setDocumentStatus({
+        hasDocuments: false,
+        isLoading: false
+      });
+    }
+
+    // Initialize recently viewed from localStorage
+    const recentlyViewedData = localStorage.getItem('recentlyViewed');
+    if (recentlyViewedData) {
+      const viewedIds = JSON.parse(recentlyViewedData).slice(0, 5);
+      
+      if (viewedIds.length > 0) {
+        try {
+          // Get all properties from backend and filter by recently viewed
+          const allProperties = await getAllProperties();
+          const recentProperties = allProperties.filter(property => 
+            viewedIds.includes(property.id)
+          );
+          setRecentlyViewed(recentProperties);
+        } catch (error) {
+          console.error("Error fetching recently viewed:", error);
+        }
+      }
+    }
+
+    // Initialize payment history with default structure
+    setPaymentHistory({
+      pastPayments: [],
+      summary: {
+        totalPaid: 0,
+        totalPending: 0,
+        nextPaymentDue: null,
+        paymentStatus: 'no_agreement'
+      }
+    });
+
+    setLoading(false);
+  }, [setDashboardData, setUserInfo, setDocumentStatus, setLoading, setRecentlyViewed, setPaymentHistory]);
+
   // Authentication-aware navigation function
   const handleGenerateAgreement = (bookingId) => {
     console.log('🔍 DEBUG: Generate Agreement clicked for booking:', bookingId);
@@ -100,7 +208,7 @@ export default function TenantDashboard() {
           console.log('🔍 DEBUG: Still not authenticated, redirecting to login');
           navigate('/login');
         }
-      }, 500);
+      }, 2000);
       return;
     }
     
@@ -128,14 +236,6 @@ export default function TenantDashboard() {
       window.location.href = path;
     }
   };
-  const [wishlistedProperties, setWishlistedProperties] = useState([]);
-  const [recentlyViewed, setRecentlyViewed] = useState([]);
-  const [dashboardData, setDashboardData] = useState(null);
-  const [paymentHistory, setPaymentHistory] = useState(null);
-  const [rentRequests, setRentRequests] = useState([]);
-  const [activeTab, setActiveTab] = useState('wishlist');
-  const [rentedPropertyTab, setRentedPropertyTab] = useState('details');
-  const [unreadNotifications, setUnreadNotifications] = useState({});
 
   // General notification tracking function
   const updateTabNotification = useCallback((tabName, hasNotification) => {
@@ -218,11 +318,21 @@ export default function TenantDashboard() {
   }, [dashboardData, user, checkAllTabNotifications]);
 
   // General tab click handler to clear notifications
-  const handleTabClick = useCallback((tabName) => {
+  const handleTabClick = useCallback(async (tabName) => {
     setActiveTab(tabName);
     // Clear notification for the clicked tab
     updateTabNotification(tabName, false);
-  }, [updateTabNotification]);
+    
+    // Mark all messages as read when chat tab is clicked
+    if (tabName === 'chat' && user?.uid) {
+      try {
+        await markAllMessagesAsRead();
+        console.log('All messages marked as read');
+      } catch (error) {
+        console.error('Failed to mark all messages as read:', error);
+      }
+    }
+  }, [updateTabNotification, user]);
 
   // Cancel booking function
   const cancelBooking = async (bookingId, propertyId) => {
@@ -289,154 +399,64 @@ export default function TenantDashboard() {
       return;
     }
 
-    const fetchDashboardData = async () => {
-      try {
-        console.log('TenantDashboard - Fetching dashboard data...');
-        
-        // Test backend connectivity first
-        console.log('TenantDashboard - Testing backend connectivity...');
-        const backendTest = await testBackendConnection();
-        if (!backendTest) {
-          console.error('TenantDashboard - Backend connectivity test failed!');
-          return;
-        }
-        
-        const data = await getUserDashboard();
-        console.log('TenantDashboard - Dashboard data received:', data);
-        console.log('TenantDashboard - Active chats count from backend:', data?.activeChatsCount);
-        console.log('TenantDashboard - Wishlist count from backend:', data?.wishlistCount);
-        setDashboardData(data);
-      } catch (error) {
-        console.error('TenantDashboard - Error fetching dashboard data:', error);
-        // Set default values if dashboard API fails
-        setDashboardData({
-          wishlistCount: 0,
-          activeChatsCount: 0,
-          rentedProperty: null,
-          rentAmount: 0,
-          nextRentDueDate: null,
-          rentStatus: 'none',
-          profileCompletion: 0
-        });
-      }
+    fetchDashboardData();
+  }, [user, authLoading, navigate, fetchRentRequests, fetchDashboardData]);
 
-      // Fetch user information via API
-      try {
-        const userResponse = await apiCall('/users/profile');
-        console.log('TenantDashboard - User profile received:', userResponse);
-        setUserInfo(userResponse);
-      } catch (error) {
-        console.error('TenantDashboard - Error fetching user profile:', error);
-      }
+  // Real-time agreement listeners
+  useEffect(() => {
+    if (!user || !dashboardData?.rentRequests) return;
 
-      // Check document completion status and show warning if needed
-      try {
-        const documentCheck = await checkTenantDocuments(user.uid);
-        
-        // Set document status for UI - ADD ONLY THIS
-        setDocumentStatus({
-          hasDocuments: documentCheck.success && documentCheck.data.hasRequiredDocuments,
-          isLoading: false
-        });
-        
-        if (!documentCheck.success || !documentCheck.data.hasRequiredDocuments) {
-          // Show warning toast/banner for incomplete documents
-          console.log('Documents incomplete, showing warning banner');
-          
-          // Create a simple toast notification
-          const toast = document.createElement('div');
-          toast.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: #f59e0b;
-            color: white;
-            padding: 12px 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            z-index: 9999;
-            max-width: 400px;
-            font-size: 14px;
-            cursor: pointer;
-          `;
-          toast.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span>!</span>
-              <span>Please fill required documents</span>
-            </div>
-          `;
-          
-          toast.onclick = () => {
-            navigate('/dashboard?tab=rental-documents');
-            document.body.removeChild(toast);
-          };
-          
-          document.body.appendChild(toast);
-          
-          // Auto-remove after 8 seconds
-          setTimeout(() => {
-            if (document.body.contains(toast)) {
-              document.body.removeChild(toast);
-            }
-          }, 8000);
-        }
-      } catch (error) {
-        console.error('Error checking document completion:', error);
-        // Don't show error to user, just log it
-      }
-
-      // Fetch wishlisted properties using API (now includes media from backend)
-      try {
-        const wishlistProperties = await getWishlist();
-        // Properties now include media from backend API
-        setWishlistedProperties(wishlistProperties);
-      } catch (error) {
-        console.error("Error fetching wishlist:", error);
-      }
-
-      // Fetch recently viewed (from localStorage for now)
-      const recentlyViewedData = localStorage.getItem('recentlyViewed');
-      if (recentlyViewedData) {
-        const viewedIds = JSON.parse(recentlyViewedData).slice(0, 5);
-        
-        if (viewedIds.length > 0) {
-          try {
-            // Get all properties from backend and filter by recently viewed
-            const allProperties = await getAllProperties();
-            const recentProperties = allProperties.filter(property => 
-              viewedIds.includes(property.id)
-            );
-
-            // Properties now include media from backend API
-            setRecentlyViewed(recentProperties);
-          } catch (error) {
-            console.error("Error fetching recently viewed:", error);
+    const unsubscribers = [];
+    
+    // Set up listeners for each booking's agreement
+    dashboardData.rentRequests.forEach(request => {
+      if (request.id) {
+        const q = query(collection(db, 'agreements'), where('bookingId', '==', request.id));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+          if (!snapshot.empty) {
+            const agreementDoc = snapshot.docs[0];
+            setAgreements(prev => ({
+              ...prev,
+              [request.id]: { id: agreementDoc.id, ...agreementDoc.data() }
+            }));
+          } else {
+            setAgreements(prev => {
+              const newAgreements = { ...prev };
+              delete newAgreements[request.id];
+              return newAgreements;
+            });
           }
-        }
+        });
+        unsubscribers.push(unsubscribe);
       }
+    });
 
-      await fetchRentRequests();
-      setPaymentHistory({
-        pastPayments: [],
-        securityDeposit: null,
-        pendingPayments: [],
-        summary: {
-          totalPaid: 0,
-          totalPending: 0
-        }
-      });
+    return () => {
+      unsubscribers.forEach(unsubscribe => unsubscribe());
+    };
+  }, [user, dashboardData?.rentRequests]);
 
-      setLoading(false);
+  // Handle browser back/forward navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      // Refresh dashboard data when user navigates back
+      if (user) {
+        fetchDashboardData();
+      }
     };
 
-    fetchDashboardData();
-  }, [user, authLoading, navigate, fetchRentRequests]);
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [user, fetchDashboardData]);
 
   const handlePropertyClick = (propertyId) => {
     // Add to recently viewed
     const recentlyViewed = JSON.parse(localStorage.getItem('recentlyViewed') || '[]');
     const updatedViewed = [propertyId, ...recentlyViewed.filter(id => id !== propertyId)].slice(0, 10);
     localStorage.setItem('recentlyViewed', JSON.stringify(updatedViewed));
+    
+    // Update React state
+    setRecentlyViewed(updatedViewed);
     
     navigate(`/property/${propertyId}`);
   };
@@ -1399,12 +1419,20 @@ For official purposes, please contact the property owner.
                             Request Sent
                           </button>
                         )}
-                        {request.status === 'pending_signature' && (
+                        {request.status === 'pending_signature' && !agreements[request.id]?.signedAt && (
                           <button 
                             className="btn-primary"
                             onClick={() => handleGenerateAgreement(request.id)}
                           >
                             Generate Agreement
+                          </button>
+                        )}
+                        {request.status === 'pending_payment' && (
+                          <button 
+                            className="btn-primary"
+                            onClick={() => navigate(`/tenant/payment/${request.id}`)}
+                          >
+                            Pay Deposit
                           </button>
                         )}
                         {request.status === 'active' && (

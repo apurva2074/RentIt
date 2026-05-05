@@ -10,16 +10,18 @@ import { useAuth } from "../../hooks/useAuth";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { fetchUserRole } from "../../utils/fetchUserRole";
 import { getOwnerDashboardSummary } from "../../services/ownerDashboardService";
-import { 
-  editProperty, 
-  deleteProperty, 
-  togglePropertyAvailability, 
+import {
+  editProperty,
+  deleteProperty,
+  togglePropertyAvailability,
   getPropertyRentHistory,
   markPropertyAsRented
 } from "../../services/propertyActionsService";
+import { startUnreadMessagesListener, stopUnreadMessagesListener, restartUnreadMessagesListener } from "../../services/unreadService";
+import { markAllMessagesAsRead } from "../../services/chatService";
 
 export default function OwnerDashboard() {
-  const { user, loading: authLoading, error: authError } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [roleChecked, setRoleChecked] = useState(false);
   const [properties, setProperties] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -36,7 +38,7 @@ export default function OwnerDashboard() {
     rentStartDate: '',
     paymentMethod: 'credit_card'
   });
-  
+
   // Bank Details state
   const [bankDetails, setBankDetails] = useState(null);
   const [bankDetailsLoading, setBankDetailsLoading] = useState(false);
@@ -226,9 +228,9 @@ export default function OwnerDashboard() {
     setBankSearchTerm(value);
     setShowBankDropdown(true);
     setHighlightedBankIndex(-1);
-    
+
     // Update form value if it matches a bank exactly
-    const matchingBank = indianBanks.find(bank => 
+    const matchingBank = indianBanks.find(bank =>
       bank.toLowerCase() === value.toLowerCase()
     );
     if (matchingBank) {
@@ -239,11 +241,11 @@ export default function OwnerDashboard() {
   // Handle keyboard navigation
   const handleBankKeyDown = (e) => {
     const banks = filteredBanks;
-    
+
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
-        setHighlightedBankIndex(prev => 
+        setHighlightedBankIndex(prev =>
           prev < banks.length - 1 ? prev + 1 : prev
         );
         break;
@@ -277,14 +279,15 @@ export default function OwnerDashboard() {
   const handleBankDropdownBlur = (e) => {
     setTimeout(() => setShowBankDropdown(false), 200);
   };
-  
+
   // Rental requests state - now categorized
   const [allBookings, setAllBookings] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [activeAgreements, setActiveAgreements] = useState([]);
   const [completedBookings, setCompletedBookings] = useState([]);
   const [rentalRequestsLoading, setRentalRequestsLoading] = useState(false);
-  
+
+
   // Dashboard data from single API
   const [dashboardData, setDashboardData] = useState({
     totalProperties: 0,
@@ -301,7 +304,10 @@ export default function OwnerDashboard() {
   });
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('properties');
-  
+
+  // Unread messages state
+  const [unreadCount, setUnreadCount] = useState(0);
+
   // Notification state for tab highlighting
   const [unreadNotifications, setUnreadNotifications] = useState({});
 
@@ -314,6 +320,25 @@ export default function OwnerDashboard() {
       setActiveTab(location.state.activeTab);
     }
   }, [location.state]);
+
+  // Unread messages listener
+  useEffect(() => {
+    if (user?.uid) {
+      startUnreadMessagesListener(user.uid, setUnreadCount);
+      return () => stopUnreadMessagesListener();
+    }
+  }, [user]);
+
+  // Retry unread messages listener after delay (in case index was created after page load)
+  useEffect(() => {
+    if (user?.uid && unreadCount === 0) {
+      const timer = setTimeout(() => {
+        console.log('🔄 Retrying unread messages listener after delay...');
+        restartUnreadMessagesListener(user.uid, setUnreadCount);
+      }, 10000); // retry after 10 seconds
+      return () => clearTimeout(timer);
+    }
+  }, [user, unreadCount]);
 
   // General notification tracking function
   const updateTabNotification = useCallback((tabName, hasNotification) => {
@@ -330,7 +355,7 @@ export default function OwnerDashboard() {
     try {
       // Check rental requests notifications
       if (pendingRequests.length > 0) {
-        const pendingCount = pendingRequests.filter(request => 
+        const pendingCount = pendingRequests.filter(request =>
           request.status === 'pending' || request.status === 'request_sent'
         ).length;
         updateTabNotification('rental-requests', pendingCount > 0);
@@ -347,7 +372,7 @@ export default function OwnerDashboard() {
 
       // Check analytics notifications (new insights, reports)
       // This would be based on new analytics data or reports
-      
+
       // Check properties notifications (maintenance requests, issues)
       // This would be based on property status changes or issues
 
@@ -357,11 +382,23 @@ export default function OwnerDashboard() {
   }, [user, pendingRequests, dashboardData, updateTabNotification]);
 
   // General tab click handler to clear notifications
-  const handleTabClick = useCallback((tabName) => {
+  const handleTabClick = useCallback(async (tabName) => {
     setActiveTab(tabName);
     // Clear notification for the clicked tab
     updateTabNotification(tabName, false);
-  }, [updateTabNotification]);
+
+    // Mark all messages as read when Messages tab is clicked
+    if (tabName === 'chat' && user?.uid) {
+      // Immediately clear unread badge and mark all messages as read globally
+      setUnreadCount(0);
+      try {
+        await markAllMessagesAsRead();
+        console.log('All messages marked as read for owner');
+      } catch (error) {
+        console.error('Failed to mark all messages as read for owner:', error);
+      }
+    }
+  }, [updateTabNotification, user]);
 
   // Auth and role guard
   useEffect(() => {
@@ -381,14 +418,14 @@ export default function OwnerDashboard() {
         console.log('OwnerDashboard - Checking role for user:', user.uid);
         const role = await fetchUserRole(user.uid);
         console.log('OwnerDashboard - User role from Firestore:', role);
-        
+
         if (!role) {
           console.error('OwnerDashboard - No role found for user');
           alert('Unable to verify your account role. Please contact support.');
           navigate("/login");
           return;
         }
-        
+
         if (role !== "owner") {
           console.log('OwnerDashboard - Role mismatch, redirecting to tenant dashboard. User role:', role);
           navigate("/dashboard");
@@ -423,7 +460,7 @@ export default function OwnerDashboard() {
         console.log("Fetching dashboard summary from single API...");
         const response = await getOwnerDashboardSummary();
         console.log("Received dashboard data:", response);
-        
+
         // Backend returns data directly, not wrapped in success/data
         if (response && typeof response === 'object') {
           setDashboardData(response);
@@ -484,7 +521,7 @@ export default function OwnerDashboard() {
     const term = searchTerm.toLowerCase().trim();
     if (!term) return properties;
 
-    return properties.filter(p => 
+    return properties.filter(p =>
       (p.title || "").toLowerCase().includes(term) ||
       (p.address?.city || "").toLowerCase().includes(term) ||
       (p.type || "").toLowerCase().includes(term)
@@ -560,65 +597,7 @@ export default function OwnerDashboard() {
     }
   };
 
-  // Fetch bank details from Firestore
-  const fetchBankDetails = useCallback(async () => {
-    if (!user || !user.uid) {
-      console.log('🔍 No user found, skipping bank details fetch');
-      return;
-    }
-
-    try {
-      setBankDetailsLoading(true);
-      console.log('🔍 Fetching bank details for owner:', user.uid);
-      
-      // Direct document access using user.uid as document ID
-      const ownerRef = doc(db, "users", user.uid);
-      const ownerSnap = await getDoc(ownerRef);
-      
-      console.log('🔍 Owner doc exists:', ownerSnap.exists());
-      
-      if (ownerSnap.exists()) {
-        const ownerData = ownerSnap.data();
-        console.log('🔍 Owner data keys:', Object.keys(ownerData));
-        console.log('🔍 Owner role:', ownerData.role);
-        console.log('🔍 Owner full data:', ownerData);
-        
-        // Verify user is owner before accessing bank details
-        if (ownerData.role === 'owner') {
-          const bankDetailsData = ownerData.bankDetails;
-          console.log('Ë Bank details found:', bankDetailsData);
-          console.log('Ë Bank details type:', typeof bankDetailsData);
-          console.log('Ë Bank details is null:', bankDetailsData === null);
-          console.log('Ë Bank details is undefined:', bankDetailsData === undefined);
-          
-          setBankDetails(bankDetailsData);
-          
-          if (bankDetailsData) {
-            console.log('Ë Bank details keys:', Object.keys(bankDetailsData));
-            setBankDetailsForm({
-              accountHolderName: bankDetailsData.accountHolderName || '',
-              bankName: bankDetailsData.bankName || '',
-              accountNumber: bankDetailsData.accountNumber || '',
-              ifsc: bankDetailsData.ifsc || '',
-              upiId: bankDetailsData.upiId || '',
-              branchName: bankDetailsData.branchName || ''
-            });
-          }
-        } else {
-          console.log('🚨 User is not an owner, cannot access bank details');
-          setBankDetails(null);
-        }
-      } else {
-        console.log('🔍 No owner document found');
-        setBankDetails(null);
-      }
-    } catch (error) {
-      console.error('🚨 Error fetching bank details:', error);
-      setBankDetails(null);
-    } finally {
-      setBankDetailsLoading(false);
-    }
-  }, [user]);
+  // fetchBankDetails function removed - now using real-time listener
 
   // Save or update bank details
   const handleSaveBankDetails = async () => {
@@ -628,10 +607,10 @@ export default function OwnerDashboard() {
     }
 
     // Validate required fields
-    if (!bankDetailsForm.accountHolderName.trim() || 
-        !bankDetailsForm.bankName.trim() || 
-        !bankDetailsForm.accountNumber.trim() || 
-        !bankDetailsForm.ifsc.trim()) {
+    if (!bankDetailsForm.accountHolderName.trim() ||
+      !bankDetailsForm.bankName.trim() ||
+      !bankDetailsForm.accountNumber.trim() ||
+      !bankDetailsForm.ifsc.trim()) {
       alert('Please fill in all required fields');
       return;
     }
@@ -639,14 +618,14 @@ export default function OwnerDashboard() {
     try {
       setBankDetailsLoading(true);
       console.log('🔍 Saving bank details for owner:', user.uid);
-      
+
       // Direct document access using user.uid as document ID
       const ownerRef = doc(db, "users", user.uid);
       const ownerSnap = await getDoc(ownerRef);
-      
+
       if (ownerSnap.exists()) {
         const ownerData = ownerSnap.data();
-        
+
         // Verify user is owner before saving bank details
         if (ownerData.role === 'owner') {
           const bankDetailsData = {
@@ -659,18 +638,25 @@ export default function OwnerDashboard() {
             isVerified: false,
             updatedAt: serverTimestamp()
           };
-          
+
+          console.log('🔍 SAVING BANK DETAILS:');
+          console.log('  - bankDetailsData:', bankDetailsData);
+          console.log('  - bankDetailsData.bankName:', bankDetailsData.bankName);
+          console.log('  - bankDetailsForm.bankName (source):', bankDetailsForm.bankName);
+
           await updateDoc(ownerRef, {
             bankDetails: bankDetailsData
           });
-          
-          setBankDetails(bankDetailsData);
+
+          console.log('✅ AFTER SAVE – Firestore updated, waiting for real-time listener');
+
+          // Real-time listener will automatically update bankDetails state
           setIsEditingBankDetails(false);
-          
+
           console.log('✅ Bank details saved successfully');
           console.log('✅ Bank details state after save:', bankDetailsData);
           console.log('✅ Bank details state variable:', bankDetails);
-          
+
           alert('Bank details saved successfully!');
         } else {
           console.log('🚨 User is not an owner, cannot save bank details');
@@ -701,12 +687,58 @@ export default function OwnerDashboard() {
     return `****-****-${accountNumber.slice(-4)}`;
   };
 
-  // Fetch bank details when requests tab is active
+  // Real-time listener for bank details (most robust solution)
   useEffect(() => {
-    if (activeTab === 'requests' && user && user.uid) {
-      fetchBankDetails();
-    }
-  }, [activeTab, user, fetchBankDetails]);
+    if (!user?.uid) return;
+
+    setBankDetailsLoading(true);
+    const ownerRef = doc(db, "users", user.uid);
+    const unsubscribe = onSnapshot(ownerRef, (docSnap) => {
+      console.log('🔍 BANK DETAILS DIAGNOSTIC - Real-time listener triggered:');
+      console.log('  - docSnap.exists():', docSnap.exists());
+
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        console.log('🔍 BANK DETAILS DIAGNOSTIC:');
+        console.log('  - ownerData.role:', data.role);
+        console.log('  - ownerData.bankDetails:', data.bankDetails);
+        console.log('  - ownerData.bankDetails?.bankName:', data.bankDetails?.bankName);
+
+        if (data.role === 'owner') {
+          const bank = data.bankDetails || null;
+          console.log('🔔 Real-time bank details update:', bank);
+          setBankDetails(bank);
+
+          if (bank) {
+            const updatedForm = {
+              accountHolderName: bank.accountHolderName || '',
+              bankName: bank.bankName || '',
+              accountNumber: bank.accountNumber || '',
+              ifsc: bank.ifsc || '',
+              upiId: bank.upiId || '',
+              branchName: bank.branchName || '',
+            };
+            setBankDetailsForm(updatedForm);
+            console.log('📝 bankDetailsForm after real-time update:', updatedForm);
+            console.log('📝 bankDetailsForm.bankName after update:', updatedForm.bankName);
+          }
+        }
+      }
+      setBankDetailsLoading(false);
+    }, (error) => {
+      console.error('Bank details listener error:', error);
+      setBankDetails(null);
+      setBankDetailsLoading(false);
+    });
+
+    return unsubscribe;
+  }, [user?.uid]);
+
+  // Debug bankDetails state changes
+  useEffect(() => {
+    console.log('🔄 bankDetails state changed:', bankDetails);
+    console.log('🔄 bankDetails?.bankName:', bankDetails?.bankName);
+  }, [bankDetails]);
 
   // Check notifications when rental requests change
   useEffect(() => {
@@ -728,38 +760,38 @@ export default function OwnerDashboard() {
       console.log("🔍 DEBUG: No user or UID, skipping fetch");
       return;
     }
-    
+
     try {
       console.log("🔍 DEBUG: Starting fetchRentalRequests for owner:", user.uid);
       setRentalRequestsLoading(true);
       const token = await user.getIdToken();
-      
+
       const apiUrl = `${process.env.REACT_APP_API_BASE || 'http://localhost:5000'}/api/rentals/owner/requests`;
       console.log("🔍 DEBUG: Making API call to:", apiUrl);
-      
+
       const response = await fetch(apiUrl, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
-      
+
       console.log("🔍 DEBUG: API response status:", response.status);
-      
+
       if (!response.ok) {
         throw new Error(`Failed to fetch rental requests: ${response.status} ${response.statusText}`);
       }
-      
+
       const data = await response.json();
       console.log("🔍 DEBUG: API response data:", data);
-      
+
       if (data.success && data.data) {
         console.log("🔍 DEBUG: Setting categorized bookings:");
         console.log("- All bookings:", data.data.allBookings?.length || 0);
         console.log("- Pending requests:", data.data.pendingRequests?.length || 0);
         console.log("- Active agreements:", data.data.activeAgreements?.length || 0);
         console.log("- Completed bookings:", data.data.completedBookings?.length || 0);
-        
+
         // Update all categorized states
         setAllBookings(data.data.allBookings || []);
         setPendingRequests(data.data.pendingRequests || []);
@@ -773,7 +805,7 @@ export default function OwnerDashboard() {
         setActiveAgreements([]);
         setCompletedBookings([]);
       }
-      
+
     } catch (error) {
       console.error('🔍 DEBUG: Error fetching rental requests:', error);
       // Reset all states on error
@@ -816,7 +848,7 @@ export default function OwnerDashboard() {
         console.log("🔍 DEBUG: Real-time update received");
         console.log("🔍 DEBUG: Snapshot size:", snapshot.size);
         console.log("🔍 DEBUG: Snapshot docs count:", snapshot.docs.length);
-        
+
         if (snapshot.size === 0) {
           console.log("🔍 DEBUG: No pending bookings found for this owner");
           setPendingRequests([]);
@@ -830,7 +862,7 @@ export default function OwnerDashboard() {
         snapshot.docs.forEach(doc => {
           console.log("- Booking ID:", doc.id, "Data:", doc.data());
         });
-        
+
         // Map documents and sort locally (client-side sorting)
         const pendingRequestsData = snapshot.docs.map(doc => ({
           id: doc.id,
@@ -843,12 +875,11 @@ export default function OwnerDashboard() {
           const bTime = b.createdAt?.seconds || b.createdAt?._seconds || 0;
           return bTime - aTime; // Descending order (newest first)
         });
-        
+
         console.log("🔍 DEBUG: Processed pending requests:", sortedPendingRequests);
         console.log("🔍 DEBUG: Setting pendingRequests with", sortedPendingRequests.length, "items");
-        
+
         setPendingRequests(sortedPendingRequests);
-        setActiveAgreements([]);
         setCompletedBookings([]);
         setRentalRequestsLoading(false);
       },
@@ -860,7 +891,7 @@ export default function OwnerDashboard() {
           stack: error.stack
         });
         setRentalRequestsLoading(false);
-        
+
         // Fallback to API call on real-time error
         console.log("🔍 DEBUG: Falling back to API call due to real-time error");
         fetchRentalRequests();
@@ -873,12 +904,71 @@ export default function OwnerDashboard() {
     };
   }, [user, user?.uid, activeTab, fetchRentalRequests]);
 
+  // Real-time listener for active/confirmed bookings (agreements)
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    console.log("🔍 DEBUG: Setting up real-time active agreements listener for owner:", user.uid);
+
+    const activeBookingsQuery = query(
+      collection(db, "bookings"),
+      where("ownerId", "==", user.uid),
+      where("status", "in", ["confirmed", "active"])
+    );
+
+    const unsubscribe = onSnapshot(activeBookingsQuery, (snapshot) => {
+      const activeBookings = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      // Sort by confirmedAt or createdAt descending
+      activeBookings.sort((a, b) => {
+        const timeA = a.confirmedAt?.seconds || a.createdAt?.seconds || 0;
+        const timeB = b.confirmedAt?.seconds || b.createdAt?.seconds || 0;
+        return timeB - timeA;
+      });
+      
+      console.log("🔍 DEBUG: Active agreements updated:", activeBookings.length, "items");
+      setActiveAgreements(activeBookings);
+    }, (error) => {
+      console.error("Real-time active agreements listener error:", error);
+      // Fallback to API fetch
+      fetchRentalRequests();
+    });
+
+    return () => unsubscribe();
+  }, [user?.uid, fetchRentalRequests]);
+
+  // Refresh analytics when active agreements change
+  useEffect(() => {
+    if (activeAgreements.length > 0 && user?.uid) {
+      console.log("🔍 DEBUG: Refreshing analytics due to active agreements change");
+      const fetchDashboardData = async () => {
+        try {
+          console.log("Fetching dashboard summary after active agreements update...");
+          const response = await getOwnerDashboardSummary();
+          
+          if (response && response.success) {
+            setProperties(response.properties || []);
+            setBankDetails(response.bankDetails || null);
+            setBankDetailsLoading(false);
+          }
+        } catch (error) {
+          console.error("Error refreshing dashboard after agreements update:", error);
+        }
+      };
+
+      fetchDashboardData();
+    }
+  }, [activeAgreements.length, user?.uid]);
+
   // Fetch rental requests when rental-requests tab is active (fallback)
   useEffect(() => {
     if (activeTab === 'rental-requests' && user && user.uid) {
       // Only fetch if real-time listener hasn't been set up (fallback)
       if (!user?.uid) return;
-      
+
       // Small delay to let real-time listener kick in first
       const timeoutId = setTimeout(() => {
         if (rentalRequestsLoading && allBookings.length === 0) {
@@ -891,21 +981,17 @@ export default function OwnerDashboard() {
     }
   }, [activeTab, user, fetchRentalRequests, rentalRequestsLoading, allBookings.length]);
 
-  // Handle rental request response (accept/reject) - FIXED WORKFLOW
   const handleRentalRequestResponse = async (bookingId, action) => {
     if (!user || !user.uid) return;
-    
-    // Check bank details before accepting booking
+
     if (action === 'accept' && !bankDetails) {
-      alert('⚠️ Bank details required!\n\nPlease add your bank details before accepting rental requests to receive rent payments.\n\nGo to Bank Details tab to add your information.');
+      alert('⚠️ Bank details required! Please add your bank details before accepting rental requests.');
       handleTabClick('requests');
       setIsEditingBankDetails(true);
       return;
     }
-    
+
     try {
-      console.log(`🔍 DEBUG: ${action}ing rental request: ${bookingId}`);
-      
       const response = await fetch(`${process.env.REACT_APP_API_BASE || 'http://localhost:5000'}/api/rentals/booking/${bookingId}/status`, {
         method: 'PATCH',
         headers: {
@@ -913,28 +999,19 @@ export default function OwnerDashboard() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          status: action === 'accept' ? 'pending_signature' : 'rejected' // FIXED: pending → pending_signature
+          status: action === 'accept' ? 'pending_signature' : 'rejected'
         })
       });
-      
+
       if (response.ok) {
-        console.log(`🔍 DEBUG: Rental request ${action}ed successfully`);
         await fetchRentalRequests();
-        
-        // Show success message
-        if (action === 'accept') {
-          alert('Request accepted successfully. Agreement sent for tenant signature.');
-        } else {
-          alert(`Rental request ${action}ed successfully!`);
-        }
-      } else {
-        throw new Error(`Failed to ${action} rental request`);
+        alert(action === 'accept' ? 'Request accepted successfully.' : 'Request rejected.');
       }
     } catch (error) {
-      console.error(`🔍 DEBUG: Error ${action}ing rental request:`, error);
-      alert(`Failed to ${action} rental request. Please try again.`);
+      alert(`Failed to ${action} rental request.`);
     }
   };
+
 
   const handleLogout = async () => {
     try {
@@ -979,59 +1056,57 @@ export default function OwnerDashboard() {
   }
 
   // If auth error or no user after loading, don't render
-  if (authError || !user || !user.uid) {
-    return null;
-  }
+
 
   return (
     <div className="minimal-dashboard">
-          {/* Header */}
-          <header className="dashboard-header">
-            <div className="header-content">
-              <div className="header-left">
-                <Link to="/" className="logo-container">
-                  <img
-                    src="/Rentit-logo.png"
-                    alt="RentIt Logo"
-                    className="rentit-logo"
-                  />
-                </Link>
-                <div className="dashboard-info">
-                  <h1 className="dashboard-title">Dashboard</h1>
-                  <p className="dashboard-subtitle">Welcome back, {user?.displayName || user?.email}</p>
-                </div>
-              </div>
-              <div className="header-right">
-                <div className="search-box">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="11" cy="11" r="8"></circle>
-                    <path d="m21 21-4.35-4.35"></path>
-                  </svg>
-                  <input
-                    type="text"
-                    placeholder="Search properties..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
-                </div>
-                <Link to="/owner/add-property" className="btn-add-property">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <line x1="12" y1="5" x2="12" y2="19"></line>
-                    <line x1="5" y1="12" x2="19" y2="12"></line>
-                  </svg>
-                  Add Property
-                </Link>
-                <button className="btn-logout" onClick={handleLogout}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                    <polyline points="16 17 21 12 16 7"></polyline>
-                    <line x1="21" y1="12" x2="9" y2="12"></line>
-                  </svg>
-                  Logout
-                </button>
-              </div>
+      {/* Header */}
+      <header className="dashboard-header">
+        <div className="header-content">
+          <div className="header-left">
+            <Link to="/" className="logo-container">
+              <img
+                src="/Rentit-logo.png"
+                alt="RentIt Logo"
+                className="rentit-logo"
+              />
+            </Link>
+            <div className="dashboard-info">
+              <h1 className="dashboard-title">Dashboard</h1>
+              <p className="dashboard-subtitle">Welcome back, {user?.displayName || user?.email}</p>
             </div>
-          </header>
+          </div>
+          <div className="header-right">
+            <div className="search-box">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <path d="m21 21-4.35-4.35"></path>
+              </svg>
+              <input
+                type="text"
+                placeholder="Search properties..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <Link to="/owner/add-property" className="btn-add-property">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Add Property
+            </Link>
+            <button className="btn-logout" onClick={handleLogout}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                <polyline points="16 17 21 12 16 7"></polyline>
+                <line x1="21" y1="12" x2="9" y2="12"></line>
+              </svg>
+              Logout
+            </button>
+          </div>
+        </div>
+      </header>
 
       {/* Navigation Tabs */}
       <div className="dashboard-tabs">
@@ -1065,6 +1140,7 @@ export default function OwnerDashboard() {
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
             </svg>
             Messages
+            {unreadCount > 0 && <span className="unread-badge">{unreadCount}</span>}
           </button>
           <button
             className={`tab ${activeTab === 'tenants' ? 'active' : ''} ${unreadNotifications['tenants'] ? 'has-notification' : ''}`}
@@ -1152,44 +1228,44 @@ export default function OwnerDashboard() {
           console.log('Ë Warning banner check:', { bankDetailsLoading, bankDetails });
           return !bankDetailsLoading && !bankDetails;
         })() && (
-          <div className="warning-banner" style={{
-            backgroundColor: '#fff3cd',
-            border: '1px solid #ffeaa7',
-            borderRadius: '8px',
-            padding: '12px 16px',
-            marginBottom: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px'
-          }}>
-            <span style={{ fontSize: '20px', color: '#856404' }}>⚠️</span>
-            <div style={{ flex: 1 }}>
-              <strong style={{ color: '#856404' }}>Bank details required to receive rent payments.</strong>
-              <p style={{ margin: '4px 0 0 0', color: '#856404', fontSize: '14px' }}>
-                Add your bank details to enable tenants to pay rent for your properties.
-              </p>
+            <div className="warning-banner" style={{
+              backgroundColor: '#fff3cd',
+              border: '1px solid #ffeaa7',
+              borderRadius: '8px',
+              padding: '12px 16px',
+              marginBottom: '20px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px'
+            }}>
+              <span style={{ fontSize: '20px', color: '#856404' }}>⚠️</span>
+              <div style={{ flex: 1 }}>
+                <strong style={{ color: '#856404' }}>Bank details required to receive rent payments.</strong>
+                <p style={{ margin: '4px 0 0 0', color: '#856404', fontSize: '14px' }}>
+                  Add your bank details to enable tenants to pay rent for your properties.
+                </p>
+              </div>
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  handleTabClick('requests');
+                  setIsEditingBankDetails(true);
+                }}
+                style={{
+                  backgroundColor: '#007bff',
+                  color: 'white',
+                  border: 'none',
+                  padding: '8px 16px',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                Add Bank Details
+              </button>
             </div>
-            <button 
-              className="btn-primary"
-              onClick={() => {
-                handleTabClick('requests');
-                setIsEditingBankDetails(true);
-              }}
-              style={{
-                backgroundColor: '#007bff',
-                color: 'white',
-                border: 'none',
-                padding: '8px 16px',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '14px'
-              }}
-            >
-              Add Bank Details
-            </button>
-          </div>
-        )}
-        
+          )}
+
         {activeTab === 'properties' && (
           <>
             {/* Stats Cards */}
@@ -1286,11 +1362,11 @@ export default function OwnerDashboard() {
                     const propertyWithStats = dashboardData.properties.find(p => p.id === property.id);
                     const viewCount = propertyWithStats?.viewCount || property.viewCount || 0;
                     const inquiries = propertyWithStats?.inquiries || property.inquiries || 0;
-                    
+
                     return (
-                      <PropertyCard 
-                        key={property.id} 
-                        property={property} 
+                      <PropertyCard
+                        key={property.id}
+                        property={property}
                         onDelete={handlePropertyDelete}
                         setDeleteConfirm={setDeleteConfirm}
                         viewCount={viewCount}
@@ -1307,13 +1383,13 @@ export default function OwnerDashboard() {
             </div>
           </>
         )}
-        
+
         {activeTab === 'analytics' && <AnalyticsReports />}
-        
+
         {activeTab === 'chat' && <OwnerChat />}
-        
+
         {activeTab === 'profile' && <OwnerProfile uid={user.uid} fallbackEmail={user.email} />}
-        
+
         {activeTab === 'tenants' && (
           <div className="tenants-section">
             <div className="section-header">
@@ -1365,8 +1441,8 @@ export default function OwnerDashboard() {
                         <div className="tenant-details">
                           <div className="tenant-avatar">
                             {property.tenant.profilePicture ? (
-                              <img 
-                                src={property.tenant.profilePicture} 
+                              <img
+                                src={property.tenant.profilePicture}
                                 alt={property.tenant.name}
                                 className="tenant-photo"
                               />
@@ -1404,7 +1480,7 @@ export default function OwnerDashboard() {
                           <div className="rent-detail-item">
                             <span className="label">Rent Start Date:</span>
                             <span className="value">
-                              {property.rentInfo.rentStartDate 
+                              {property.rentInfo.rentStartDate
                                 ? new Date(property.rentInfo.rentStartDate).toLocaleDateString()
                                 : 'Not specified'
                               }
@@ -1413,7 +1489,7 @@ export default function OwnerDashboard() {
                           <div className="rent-detail-item">
                             <span className="label">Last Payment:</span>
                             <span className="value">
-                              {property.rentInfo.lastPaymentDate 
+                              {property.rentInfo.lastPaymentDate
                                 ? new Date(property.rentInfo.lastPaymentDate).toLocaleDateString()
                                 : 'No payments yet'
                               }
@@ -1430,7 +1506,7 @@ export default function OwnerDashboard() {
                     )}
 
                     <div className="tenant-card-actions">
-                      <button 
+                      <button
                         className="btn-secondary"
                         onClick={() => handleViewRentHistory(property)}
                       >
@@ -1446,7 +1522,7 @@ export default function OwnerDashboard() {
             )}
           </div>
         )}
-        
+
         {activeTab === 'requests' && (
           <div className="bank-details-section">
             <div className="section-header">
@@ -1470,14 +1546,14 @@ export default function OwnerDashboard() {
                 <div className="form-card">
                   <div className="form-header">
                     <h3>{bankDetails ? 'Update Bank Details' : 'Add Bank Details'}</h3>
-                    <button 
+                    <button
                       className="btn-secondary"
                       onClick={() => setIsEditingBankDetails(false)}
                     >
                       Cancel
                     </button>
                   </div>
-                  
+
                   <form onSubmit={(e) => { e.preventDefault(); handleSaveBankDetails(); }}>
                     <div className="form-grid">
                       <div className="form-group">
@@ -1490,7 +1566,7 @@ export default function OwnerDashboard() {
                           required
                         />
                       </div>
-                      
+
                       <div className="form-group">
                         <label>Bank Name *</label>
                         <div style={{ position: 'relative' }}>
@@ -1513,7 +1589,7 @@ export default function OwnerDashboard() {
                               boxSizing: 'border-box'
                             }}
                           />
-                          
+
                           {showBankDropdown && filteredBanks.length > 0 && (
                             <div
                               style={{
@@ -1571,7 +1647,7 @@ export default function OwnerDashboard() {
                           {filteredBanks.length} banks found • Type to search or use arrow keys to navigate
                         </small>
                       </div>
-                      
+
                       <div className="form-group">
                         <label>Account Number *</label>
                         <input
@@ -1582,7 +1658,7 @@ export default function OwnerDashboard() {
                           required
                         />
                       </div>
-                      
+
                       <div className="form-group">
                         <label>IFSC Code *</label>
                         <input
@@ -1593,7 +1669,7 @@ export default function OwnerDashboard() {
                           required
                         />
                       </div>
-                      
+
                       <div className="form-group">
                         <label>UPI ID (Optional)</label>
                         <input
@@ -1603,7 +1679,7 @@ export default function OwnerDashboard() {
                           placeholder="Enter UPI ID"
                         />
                       </div>
-                      
+
                       <div className="form-group">
                         <label>Branch Name *</label>
                         <input
@@ -1615,16 +1691,16 @@ export default function OwnerDashboard() {
                         />
                       </div>
                     </div>
-                    
+
                     <div className="form-actions">
-                      <button 
+                      <button
                         type="button"
                         className="btn-secondary"
                         onClick={() => setIsEditingBankDetails(false)}
                       >
                         Cancel
                       </button>
-                      <button 
+                      <button
                         type="submit"
                         className="btn-primary"
                         disabled={bankDetailsLoading}
@@ -1645,7 +1721,7 @@ export default function OwnerDashboard() {
                 </svg>
                 <h3>No Bank Details Added</h3>
                 <p>Add your bank details to receive rent payments from tenants</p>
-                <button 
+                <button
                   className="btn-primary"
                   onClick={() => setIsEditingBankDetails(true)}
                 >
@@ -1657,14 +1733,14 @@ export default function OwnerDashboard() {
                 <div className="bank-details-card">
                   <div className="bank-details-header">
                     <h3>Bank Account Information</h3>
-                    <button 
+                    <button
                       className="btn-secondary"
                       onClick={() => setIsEditingBankDetails(true)}
                     >
                       Update
                     </button>
                   </div>
-                  
+
                   <div className="bank-details-grid">
                     <div className="detail-item">
                       <label>Account Holder Name:</label>
@@ -1693,7 +1769,7 @@ export default function OwnerDashboard() {
                       <span>{bankDetails.branchName}</span>
                     </div>
                   </div>
-                  
+
                   <div className="verification-status">
                     <span className={`status-badge ${bankDetails.isVerified ? 'verified' : 'pending'}`}>
                       {bankDetails.isVerified ? 'Verified' : 'Pending Verification'}
@@ -1706,14 +1782,14 @@ export default function OwnerDashboard() {
                 <div className="form-card">
                   <div className="form-header">
                     <h3>Update Bank Details</h3>
-                    <button 
+                    <button
                       className="btn-secondary"
                       onClick={() => setIsEditingBankDetails(false)}
                     >
                       Cancel
                     </button>
                   </div>
-                  
+
                   <form onSubmit={(e) => { e.preventDefault(); handleSaveBankDetails(); }}>
                     <div className="form-grid">
                       <div className="form-group">
@@ -1726,7 +1802,7 @@ export default function OwnerDashboard() {
                           required
                         />
                       </div>
-                      
+
                       <div className="form-group">
                         <label>Bank Name *</label>
                         <div style={{ position: 'relative' }}>
@@ -1749,7 +1825,7 @@ export default function OwnerDashboard() {
                               boxSizing: 'border-box'
                             }}
                           />
-                          
+
                           {showBankDropdown && filteredBanks.length > 0 && (
                             <div
                               style={{
@@ -1807,7 +1883,7 @@ export default function OwnerDashboard() {
                           {filteredBanks.length} banks found • Type to search or use arrow keys to navigate
                         </small>
                       </div>
-                      
+
                       <div className="form-group">
                         <label>Account Number *</label>
                         <input
@@ -1818,7 +1894,7 @@ export default function OwnerDashboard() {
                           required
                         />
                       </div>
-                      
+
                       <div className="form-group">
                         <label>IFSC Code *</label>
                         <input
@@ -1829,7 +1905,7 @@ export default function OwnerDashboard() {
                           required
                         />
                       </div>
-                      
+
                       <div className="form-group">
                         <label>UPI ID (Optional)</label>
                         <input
@@ -1839,7 +1915,7 @@ export default function OwnerDashboard() {
                           placeholder="Enter UPI ID"
                         />
                       </div>
-                      
+
                       <div className="form-group">
                         <label>Branch Name *</label>
                         <input
@@ -1851,16 +1927,16 @@ export default function OwnerDashboard() {
                         />
                       </div>
                     </div>
-                    
+
                     <div className="form-actions">
-                      <button 
+                      <button
                         type="button"
                         className="btn-secondary"
                         onClick={() => setIsEditingBankDetails(false)}
                       >
                         Cancel
                       </button>
-                      <button 
+                      <button
                         type="submit"
                         className="btn-primary"
                         disabled={bankDetailsLoading}
@@ -1874,7 +1950,7 @@ export default function OwnerDashboard() {
             )}
           </div>
         )}
-        
+
         {activeTab === 'rental-requests' && (
           <div className="rental-requests-section">
             <div className="section-header">
@@ -1885,20 +1961,20 @@ export default function OwnerDashboard() {
                 </span>
                 {/* DEBUG: Temporary test button */}
                 {process.env.NODE_ENV === 'development' && (
-                  <button 
+                  <button
                     onClick={async () => {
                       console.log("🔍 MANUAL DEBUG: Testing Firestore query...");
                       if (!user?.uid) {
                         console.log("🔍 No user UID");
                         return;
                       }
-                      
+
                       const testQuery = query(
                         collection(db, "bookings"),
                         where("ownerId", "==", user.uid),
                         where("status", "==", "pending")
                       );
-                      
+
                       const testSnapshot = await getDocs(testQuery);
                       console.log("🔍 MANUAL DEBUG: Query results:");
                       console.log("- Snapshot size:", testSnapshot.size);
@@ -1907,16 +1983,7 @@ export default function OwnerDashboard() {
                         console.log("- Found booking:", doc.id, doc.data());
                       });
                     }}
-                    style={{ 
-                      marginLeft: '10px', 
-                      padding: '5px 10px', 
-                      fontSize: '12px',
-                      backgroundColor: '#007bff',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer'
-                    }}
+                    className="debug-test-btn"
                   >
                     Test Query
                   </button>
@@ -1956,23 +2023,26 @@ export default function OwnerDashboard() {
               </div>
             ) : (
               <div className="rental-requests-grid">
-                {pendingRequests.map((request) => (
-                  <div key={request.id} className="rental-request-card">
-                    <div className="request-header">
-                      <div className="property-info">
-                        <h3>{request.propertyDetails?.title || 'Unknown Property'}</h3>
-                        <p className="tenant-name">Tenant: {request.tenantDetails?.fullName || 'Unknown Tenant'}</p>
-                        <p className="submitted-date">
-                          Requested: {new Date(request.createdAt?.toDate?.() || request.createdAt).toLocaleDateString()}
-                        </p>
-                      </div>
-                      <div className="request-status">
-                        <span className="status-badge pending">Request Sent</span>
-                      </div>
-                    </div>
+                {pendingRequests.map((request) => {
+                  const tenantName = request.tenantDetails?.fullName || request.tenantDetails?.name || 'Unknown Tenant';
+                  const propertyTitle = request.propertyDetails?.title || 'Unknown Property';
 
-                    <div className="request-details">
-                      <div className="detail-grid">
+                  return (
+                    <div key={request.id} className="rental-request-card">
+                      <div className="request-header">
+                        <div className="property-info">
+                          <h3>{propertyTitle}</h3>
+                          <p className="tenant-name">Tenant: {tenantName}</p>
+                          <p className="request-date">
+                            {new Date(request.createdAt?.toDate?.() || request.createdAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <div className="request-status">
+                          <span className="status-badge pending">Pending</span>
+                        </div>
+                      </div>
+
+                      <div className="request-details">
                         <div className="detail-item">
                           <span className="label">Proposed Rent:</span>
                           <span className="value">₹{request.proposedRent?.toLocaleString() || request.propertyDetails?.rent?.toLocaleString() || 'N/A'}/month</span>
@@ -1981,63 +2051,47 @@ export default function OwnerDashboard() {
                           <span className="label">Security Deposit:</span>
                           <span className="value">₹{request.proposedDeposit?.toLocaleString() || request.propertyDetails?.securityDeposit?.toLocaleString() || 'N/A'}</span>
                         </div>
-                        <div className="detail-item">
-                          <span className="label">Move-in Date:</span>
-                          <span className="value">
-                            {request.tenantDetails?.moveInDate 
-                              ? new Date(request.tenantDetails.moveInDate).toLocaleDateString()
-                              : 'Not specified'
+                      </div>
+
+                      <div className="request-actions">
+                        <button
+                          className="btn btn-outline btn-reject"
+                          onClick={() => {
+                            if (window.confirm(`Are you sure you want to reject the rental request from ${tenantName} for "${propertyTitle}"?`)) {
+                              handleRentalRequestResponse(request.id, 'reject');
                             }
-                          </span>
-                        </div>
-                        <div className="detail-item">
-                          <span className="label">Lease Duration:</span>
-                          <span className="value">{request.tenantDetails?.leaseDuration || 'Not specified'} months</span>
-                        </div>
+                          }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M18 6L6 18"></path>
+                            <path d="M6 6l12 12"></path>
+                          </svg>
+                          Reject
+                        </button>
+                        <button
+                          className="btn btn-primary btn-accept"
+                          onClick={() => {
+                            if (window.confirm(`Are you sure you want to accept the rental request from ${tenantName} for "${propertyTitle}"?`)) {
+                              handleRentalRequestResponse(request.id, 'accept');
+                            }
+                          }}
+                          disabled={!bankDetails}
+                          title={!bankDetails ? 'Bank details required to accept requests' : ''}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M20 6L9 17l-5-5"></path>
+                          </svg>
+                          Accept
+                        </button>
                       </div>
                     </div>
-
-                    <div className="request-actions">
-                      <button 
-                        className="reject-btn"
-                        onClick={() => {
-                          if (window.confirm('Are you sure you want to reject this rental request?')) {
-                            handleRentalRequestResponse(request.id, 'reject');
-                          }
-                        }}
-                      >
-                        Reject
-                      </button>
-                      <button 
-                        className="accept-btn"
-                        onClick={() => {
-                          if (window.confirm('Are you sure you want to accept this rental request?')) {
-                            handleRentalRequestResponse(request.id, 'accept');
-                          }
-                        }}
-                        title={!bankDetails ? 'Bank details required to accept requests' : ''}
-                        style={!bankDetails ? {
-                          opacity: '0.7',
-                          cursor: 'not-allowed'
-                        } : {}}
-                      >
-                        Accept
-                        {!bankDetails && (
-                          <span style={{ 
-                            marginLeft: '5px', 
-                            fontSize: '12px',
-                            color: '#dc3545'
-                          }}>⚠️</span>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
         )}
-        
+
         {activeTab === 'active-agreements' && (
           <div className="active-agreements-section">
             <div className="section-header">
@@ -2073,7 +2127,7 @@ export default function OwnerDashboard() {
                     <div className="agreement-header">
                       <div className="property-info">
                         <h3>{agreement.propertyDetails?.title || 'Unknown Property'}</h3>
-                        <p className="tenant-name">Tenant: {agreement.tenantDetails?.fullName || 'Unknown Tenant'}</p>
+                        <p className="tenant-name">Tenant: {agreement.tenantDetails?.fullName || agreement.tenantDetails?.name || 'Unknown Tenant'}</p>
                         <p className="created-date">
                           Created: {new Date(agreement.createdAt?.toDate?.() || agreement.createdAt).toLocaleDateString()}
                         </p>
@@ -2105,7 +2159,7 @@ export default function OwnerDashboard() {
             )}
           </div>
         )}
-        
+
         {activeTab === 'completed-bookings' && (
           <div className="completed-bookings-section">
             <div className="section-header">
@@ -2138,7 +2192,7 @@ export default function OwnerDashboard() {
                     <div className="booking-header">
                       <div className="property-info">
                         <h3>{booking.propertyDetails?.title || 'Unknown Property'}</h3>
-                        <p className="tenant-name">Tenant: {booking.tenantDetails?.fullName || 'Unknown Tenant'}</p>
+                        <p className="tenant-name">Tenant: {booking.tenantDetails?.fullName || booking.tenantDetails?.name || 'Unknown Tenant'}</p>
                         <p className="completed-date">
                           {booking.status === 'completed' ? 'Completed' : 'Cancelled'}: {new Date(booking.updatedAt?.toDate?.() || booking.updatedAt).toLocaleDateString()}
                         </p>
@@ -2191,7 +2245,7 @@ export default function OwnerDashboard() {
                   required
                 />
               </div>
-              
+
               <div className="form-group">
                 <label>Rent Amount (₹)</label>
                 <input
@@ -2205,7 +2259,7 @@ export default function OwnerDashboard() {
                   required
                 />
               </div>
-              
+
               <div className="form-group">
                 <label>Rent Start Date</label>
                 <input
@@ -2218,7 +2272,7 @@ export default function OwnerDashboard() {
                   required
                 />
               </div>
-              
+
               <div className="form-group">
                 <label>Payment Method</label>
                 <select
@@ -2238,7 +2292,7 @@ export default function OwnerDashboard() {
                 </select>
               </div>
             </div>
-            
+
             <div className="modal-actions">
               <button className="btn-secondary" onClick={() => setMarkRentedProperty(null)}>
                 Cancel
@@ -2274,7 +2328,7 @@ export default function OwnerDashboard() {
         <div className="edit-property-overlay">
           <div className="edit-property-modal">
             <h4>Edit Property</h4>
-            <EditPropertyForm 
+            <EditPropertyForm
               property={editingProperty}
               onSave={handleSaveProperty}
               onCancel={() => setEditingProperty(null)}
@@ -2288,7 +2342,7 @@ export default function OwnerDashboard() {
         <div className="rent-history-overlay">
           <div className="rent-history-modal">
             <h4>Tenants & Rent History - {rentHistoryProperty.title}</h4>
-            <RentHistoryContent 
+            <RentHistoryContent
               property={rentHistoryData.property}
               rentHistory={rentHistoryData.rentHistory}
               totalPayments={rentHistoryData.totalPayments}
@@ -2301,505 +2355,506 @@ export default function OwnerDashboard() {
           </div>
         </div>
       )}
+
     </div>
   );
-}
 
-// Property Card Component
-function PropertyCard({ 
-  property, 
-  onDelete, 
-  setDeleteConfirm, 
-  viewCount = 0, 
-  inquiries = 0,
-  onEdit,
-  onToggleAvailability,
-  onViewRentHistory,
-  onMarkAsRented
-}) {
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'ACTIVE': return 'success';
-      case 'PENDING': return 'warning';
-      case 'REJECTED': return 'danger';
-      case 'rented': return 'info';
-      case 'available': return 'success';
-      case 'unavailable': return 'warning';
-      default: return 'default';
-    }
-  };
-
-  return (
-    <div className="property-card">
-      <div className="property-image">
-        {/* Show multiple images in a carousel or grid */}
-        {property.images && Array.isArray(property.images) && property.images.length > 0 ? (
-          <div className="property-images-container">
-            <img 
-              src={property.images[0]?.url || "/placeholder-property.jpg"} 
-              alt={property.title || 'Property'}
-              className="main-property-image"
-              onError={(e) => {
-                e.target.src = "/placeholder-property.jpg";
-              }}
-            />
-            {property.images.length > 1 && (
-              <div className="image-indicators">
-                <span className="image-count">+{property.images.length - 1} more</span>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="no-image-placeholder">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-              <circle cx="8.5" cy="8.5" r="1.5"></circle>
-              <polyline points="21 15 16 10 5 21"></polyline>
-            </svg>
-            <span>No Images</span>
-          </div>
-        )}
-        <span className={`status-badge ${getStatusColor(property.status)}`}>
-          {property.status === 'rented' ? 'Rented' : 
-           property.status === 'available' ? 'Available' :
-           property.status === 'unavailable' ? 'Unavailable' :
-           property.status || 'PENDING'}
-        </span>
-      </div>
-      
-      <div className="property-content">
-        <div className="property-header">
-          <h3>{property.title}</h3>
-          <div className="property-price">
-            ₹{property.rent || property.monthlyRent || 0}/month
-          </div>
-        </div>
-        
-        <div className="property-location">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
-            <circle cx="12" cy="10" r="3"></circle>
-          </svg>
-          {property.address?.city}, {property.address?.state}
-        </div>
-        
-        <div className="property-details">
-          <span>{property.bedrooms || 0} bed</span>
-          <span>{property.bathrooms || 0} bath</span>
-          <span>{property.squareFootage || 0} sqft</span>
-        </div>
-        
-        <div className="property-stats">
-          <span className="stat views-stat">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-              <circle cx="12" cy="12" r="3"></circle>
-            </svg>
-            {viewCount.toLocaleString()} views
-          </span>
-          <span className="stat inquiries-stat">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-            </svg>
-            {inquiries} inquiries
-          </span>
-        </div>
-        
-        <div className="property-actions">
-          <button 
-            className="btn-secondary"
-            onClick={() => onEdit(property)}
-          >
-            Edit
-          </button>
-          <button className="btn-outline">View Details</button>
-          
-          {/* Show Mark as Rented button only when property is available */}
-          {property.status === 'available' && (
-            <button 
-              className="btn-primary"
-              onClick={() => onMarkAsRented(property)}
-            >
-              Mark as Rented
-            </button>
-          )}
-          
-          {/* Show Tenants/Rent Info only when property is rented */}
-          {property.status === 'rented' && (
-            <button 
-              className="btn-outline"
-              onClick={() => onViewRentHistory(property)}
-            >
-              Tenants / Rent Info
-            </button>
-          )}
-          
-          {/* Show Mark Unavailable only when property is available */}
-          {property.status === 'available' && (
-            <button 
-              className="btn-outline"
-              onClick={() => onToggleAvailability(property)}
-            >
-              Mark Unavailable
-            </button>
-          )}
-          
-          {/* Show Mark Available only when property is unavailable */}
-          {property.status === 'unavailable' && (
-            <button 
-              className="btn-outline"
-              onClick={() => onToggleAvailability(property)}
-            >
-              Mark Available
-            </button>
-          )}
-          
-          <button 
-            className="btn-danger" 
-            onClick={() => setDeleteConfirm(property)}
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Edit Property Form Component
-function EditPropertyForm({ property, onSave, onCancel }) {
-  const [formData, setFormData] = useState({
-    title: property.title || '',
-    description: property.description || '',
-    rent: property.rent || property.monthlyRent || '',
-    address: property.address || {},
-    type: property.type || '',
-    bedrooms: property.bedrooms || '',
-    bathrooms: property.bathrooms || '',
-    squareFootage: property.squareFootage || '',
-    availableDate: property.availableDate || '',
-    leaseDuration: property.leaseDuration || '',
-    maintenanceCharge: property.maintenanceCharge || '',
-    securityDeposit: property.securityDeposit || '',
-    pgGender: property.pgGender || '',
-  });
-
-  // Photo management state
-  const [existingPhotos, setExistingPhotos] = useState(property.images || []);
-  const [newPhotos, setNewPhotos] = useState([]);
-  const [photosToRemove, setPhotosToRemove] = useState([]);
-
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    if (name.includes('.')) {
-      const [parent, child] = name.split('.');
-      setFormData(prev => ({
-        ...prev,
-        [parent]: {
-          ...prev[parent],
-          [child]: value
-        }
-      }));
-    } else {
-      setFormData(prev => ({
-        ...prev,
-        [name]: value
-      }));
-    }
-  };
-
-  const handlePhotoSelect = (e) => {
-    const files = Array.from(e.target.files);
-    setNewPhotos(prev => [...prev, ...files]);
-  };
-
-  const removeExistingPhoto = (photoIndex) => {
-    const photo = existingPhotos[photoIndex];
-    setExistingPhotos(prev => prev.filter((_, i) => i !== photoIndex));
-    setPhotosToRemove(prev => [...prev, photo]);
-  };
-
-  const removeNewPhoto = (photoIndex) => {
-    setNewPhotos(prev => prev.filter((_, i) => i !== photoIndex));
-  };
-
-  const getPhotoUrl = (photo) => {
-    if (typeof photo === 'string') {
-      return photo;
-    }
-    return photo.url || URL.createObjectURL(photo);
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    
-    // Prepare photos data
-    const photosData = {
-      existingPhotos: existingPhotos,
-      newPhotos: newPhotos,
-      photosToRemove: photosToRemove
+  // Property Card Component
+  function PropertyCard({
+    property,
+    onDelete,
+    setDeleteConfirm,
+    viewCount = 0,
+    inquiries = 0,
+    onEdit,
+    onToggleAvailability,
+    onViewRentHistory,
+    onMarkAsRented
+  }) {
+    const getStatusColor = (status) => {
+      switch (status) {
+        case 'ACTIVE': return 'success';
+        case 'PENDING': return 'warning';
+        case 'REJECTED': return 'danger';
+        case 'rented': return 'info';
+        case 'available': return 'success';
+        case 'unavailable': return 'warning';
+        default: return 'default';
+      }
     };
-    
-    onSave({
-      ...formData,
-      ...photosData
-    });
-  };
 
-  return (
-    <form onSubmit={handleSubmit} className="edit-property-form">
-      <div className="form-row">
-        <div className="form-group">
-          <label>Property Title</label>
-          <input
-            type="text"
-            name="title"
-            value={formData.title}
-            onChange={handleChange}
-            required
-          />
-        </div>
-        <div className="form-group">
-          <label>Monthly Rent (₹)</label>
-          <input
-            type="number"
-            name="rent"
-            value={formData.rent}
-            onChange={handleChange}
-            required
-          />
-        </div>
-      </div>
-
-      <div className="form-group">
-        <label>Description</label>
-        <textarea
-          name="description"
-          value={formData.description}
-          onChange={handleChange}
-          rows="3"
-        />
-      </div>
-
-      <div className="form-row">
-        <div className="form-group">
-          <label>City</label>
-          <input
-            type="text"
-            name="address.city"
-            value={formData.address.city || ''}
-            onChange={handleChange}
-          />
-        </div>
-        <div className="form-group">
-          <label>State</label>
-          <input
-            type="text"
-            name="address.state"
-            value={formData.address.state || ''}
-            onChange={handleChange}
-          />
-        </div>
-      </div>
-
-      <div className="form-row">
-        <div className="form-group">
-          <label>Bedrooms</label>
-          <input
-            type="number"
-            name="bedrooms"
-            value={formData.bedrooms}
-            onChange={handleChange}
-          />
-        </div>
-        <div className="form-group">
-          <label>Bathrooms</label>
-          <input
-            type="number"
-            name="bathrooms"
-            value={formData.bathrooms}
-            onChange={handleChange}
-          />
-        </div>
-      </div>
-
-      <div className="form-row">
-        <div className="form-group">
-          <label>Square Footage</label>
-          <input
-            type="number"
-            name="squareFootage"
-            value={formData.squareFootage}
-            onChange={handleChange}
-          />
-        </div>
-        <div className="form-group">
-          <label>Property Type</label>
-          <select name="type" value={formData.type} onChange={handleChange}>
-            <option value="">Select Type</option>
-            <option value="apartment">Apartment</option>
-            <option value="house">House</option>
-            <option value="pg">PG</option>
-            <option value="studio">Studio</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Photo Management Section */}
-      <div className="photo-management-section">
-        <label>Property Photos</label>
-        
-        {/* Existing Photos */}
-        {existingPhotos.length > 0 && (
-          <div className="photos-section">
-            <h5>Current Photos ({existingPhotos.length})</h5>
-            <div className="photos-grid">
-              {existingPhotos.map((photo, index) => (
-                <div key={`existing-${index}`} className="photo-item">
-                  <img 
-                    src={getPhotoUrl(photo)} 
-                    alt={`Property ${index + 1}`}
-                    className="photo-thumbnail"
-                  />
-                  <button
-                    type="button"
-                    className="remove-photo-btn"
-                    onClick={() => removeExistingPhoto(index)}
-                    title="Remove photo"
-                  >
-                    ×
-                  </button>
+    return (
+      <div className="property-card">
+        <div className="property-image">
+          {/* Show multiple images in a carousel or grid */}
+          {property.images && Array.isArray(property.images) && property.images.length > 0 ? (
+            <div className="property-images-container">
+              <img
+                src={property.images[0]?.url || "/placeholder-property.jpg"}
+                alt={property.title || 'Property'}
+                className="main-property-image"
+                onError={(e) => {
+                  e.target.src = "/placeholder-property.jpg";
+                }}
+              />
+              {property.images.length > 1 && (
+                <div className="image-indicators">
+                  <span className="image-count">+{property.images.length - 1} more</span>
                 </div>
-              ))}
+              )}
             </div>
-          </div>
-        )}
-
-        {/* New Photos */}
-        {newPhotos.length > 0 && (
-          <div className="photos-section">
-            <h5>New Photos ({newPhotos.length})</h5>
-            <div className="photos-grid">
-              {newPhotos.map((photo, index) => (
-                <div key={`new-${index}`} className="photo-item">
-                  <img 
-                    src={URL.createObjectURL(photo)} 
-                    alt={`New ${index + 1}`}
-                    className="photo-thumbnail"
-                  />
-                  <button
-                    type="button"
-                    className="remove-photo-btn"
-                    onClick={() => removeNewPhoto(index)}
-                    title="Remove photo"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+          ) : (
+            <div className="no-image-placeholder">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                <polyline points="21 15 16 10 5 21"></polyline>
+              </svg>
+              <span>No Images</span>
             </div>
-          </div>
-        )}
-
-        {/* Add Photos Button */}
-        <div className="add-photo-section">
-          <input
-            type="file"
-            multiple
-            accept="image/*"
-            onChange={handlePhotoSelect}
-            id="photo-upload"
-            style={{ display: 'none' }}
-          />
-          <button
-            type="button"
-            className="btn-outline"
-            onClick={() => document.getElementById('photo-upload').click()}
-          >
-            + Add Photos
-          </button>
-          <span className="photo-hint">
-            You can add multiple photos. Click × on any photo to remove it.
+          )}
+          <span className={`status-badge ${getStatusColor(property.status)}`}>
+            {property.status === 'rented' ? 'Rented' :
+              property.status === 'available' ? 'Available' :
+                property.status === 'unavailable' ? 'Unavailable' :
+                  property.status || 'PENDING'}
           </span>
         </div>
-      </div>
 
-      <div className="modal-actions">
-        <button type="button" className="btn-outline" onClick={onCancel}>
-          Cancel
-        </button>
-        <button type="submit" className="btn-secondary">
-          Save Changes
-        </button>
+        <div className="property-content">
+          <div className="property-header">
+            <h3>{property.title}</h3>
+            <div className="property-price">
+              ₹{property.rent || property.monthlyRent || 0}/month
+            </div>
+          </div>
+
+          <div className="property-location">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+              <circle cx="12" cy="10" r="3"></circle>
+            </svg>
+            {property.address?.city}, {property.address?.state}
+          </div>
+
+          <div className="property-details">
+            <span>{property.bedrooms || 0} bed</span>
+            <span>{property.bathrooms || 0} bath</span>
+            <span>{property.squareFootage || 0} sqft</span>
+          </div>
+
+          <div className="property-stats">
+            <span className="stat views-stat">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+              {viewCount.toLocaleString()} views
+            </span>
+            <span className="stat inquiries-stat">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+              </svg>
+              {inquiries} inquiries
+            </span>
+          </div>
+
+          <div className="property-actions">
+            <button
+              className="btn-secondary"
+              onClick={() => onEdit(property)}
+            >
+              Edit
+            </button>
+            <button className="btn-outline">View Details</button>
+
+            {/* Show Mark as Rented button only when property is available */}
+            {property.status === 'available' && (
+              <button
+                className="btn-primary"
+                onClick={() => onMarkAsRented(property)}
+              >
+                Mark as Rented
+              </button>
+            )}
+
+            {/* Show Tenants/Rent Info only when property is rented */}
+            {property.status === 'rented' && (
+              <button
+                className="btn-outline"
+                onClick={() => onViewRentHistory(property)}
+              >
+                Tenants / Rent Info
+              </button>
+            )}
+
+            {/* Show Mark Unavailable only when property is available */}
+            {property.status === 'available' && (
+              <button
+                className="btn-outline"
+                onClick={() => onToggleAvailability(property)}
+              >
+                Mark Unavailable
+              </button>
+            )}
+
+            {/* Show Mark Available only when property is unavailable */}
+            {property.status === 'unavailable' && (
+              <button
+                className="btn-outline"
+                onClick={() => onToggleAvailability(property)}
+              >
+                Mark Available
+              </button>
+            )}
+
+            <button
+              className="btn-danger"
+              onClick={() => setDeleteConfirm(property)}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
       </div>
-    </form>
-  );
+    );
+  }
+
+  // Edit Property Form Component
+  function EditPropertyForm({ property, onSave, onCancel }) {
+    const [formData, setFormData] = useState({
+      title: property.title || '',
+      description: property.description || '',
+      rent: property.rent || property.monthlyRent || '',
+      address: property.address || {},
+      type: property.type || '',
+      bedrooms: property.bedrooms || '',
+      bathrooms: property.bathrooms || '',
+      squareFootage: property.squareFootage || '',
+      availableDate: property.availableDate || '',
+      leaseDuration: property.leaseDuration || '',
+      maintenanceCharge: property.maintenanceCharge || '',
+      securityDeposit: property.securityDeposit || '',
+      pgGender: property.pgGender || '',
+    });
+
+    // Photo management state
+    const [existingPhotos, setExistingPhotos] = useState(property.images || []);
+    const [newPhotos, setNewPhotos] = useState([]);
+    const [photosToRemove, setPhotosToRemove] = useState([]);
+
+    const handleChange = (e) => {
+      const { name, value } = e.target;
+      if (name.includes('.')) {
+        const [parent, child] = name.split('.');
+        setFormData(prev => ({
+          ...prev,
+          [parent]: {
+            ...prev[parent],
+            [child]: value
+          }
+        }));
+      } else {
+        setFormData(prev => ({
+          ...prev,
+          [name]: value
+        }));
+      }
+    };
+
+    const handlePhotoSelect = (e) => {
+      const files = Array.from(e.target.files);
+      setNewPhotos(prev => [...prev, ...files]);
+    };
+
+    const removeExistingPhoto = (photoIndex) => {
+      const photo = existingPhotos[photoIndex];
+      setExistingPhotos(prev => prev.filter((_, i) => i !== photoIndex));
+      setPhotosToRemove(prev => [...prev, photo]);
+    };
+
+    const removeNewPhoto = (photoIndex) => {
+      setNewPhotos(prev => prev.filter((_, i) => i !== photoIndex));
+    };
+
+    const getPhotoUrl = (photo) => {
+      if (typeof photo === 'string') {
+        return photo;
+      }
+      return photo.url || URL.createObjectURL(photo);
+    };
+
+    const handleSubmit = (e) => {
+      e.preventDefault();
+
+      // Prepare photos data
+      const photosData = {
+        existingPhotos: existingPhotos,
+        newPhotos: newPhotos,
+        photosToRemove: photosToRemove
+      };
+
+      onSave({
+        ...formData,
+        ...photosData
+      });
+    };
+
+    return (
+      <form onSubmit={handleSubmit} className="edit-property-form">
+        <div className="form-row">
+          <div className="form-group">
+            <label>Property Title</label>
+            <input
+              type="text"
+              name="title"
+              value={formData.title}
+              onChange={handleChange}
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>Monthly Rent (₹)</label>
+            <input
+              type="number"
+              name="rent"
+              value={formData.rent}
+              onChange={handleChange}
+              required
+            />
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label>Description</label>
+          <textarea
+            name="description"
+            value={formData.description}
+            onChange={handleChange}
+            rows="3"
+          />
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label>City</label>
+            <input
+              type="text"
+              name="address.city"
+              value={formData.address.city || ''}
+              onChange={handleChange}
+            />
+          </div>
+          <div className="form-group">
+            <label>State</label>
+            <input
+              type="text"
+              name="address.state"
+              value={formData.address.state || ''}
+              onChange={handleChange}
+            />
+          </div>
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label>Bedrooms</label>
+            <input
+              type="number"
+              name="bedrooms"
+              value={formData.bedrooms}
+              onChange={handleChange}
+            />
+          </div>
+          <div className="form-group">
+            <label>Bathrooms</label>
+            <input
+              type="number"
+              name="bathrooms"
+              value={formData.bathrooms}
+              onChange={handleChange}
+            />
+          </div>
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label>Square Footage</label>
+            <input
+              type="number"
+              name="squareFootage"
+              value={formData.squareFootage}
+              onChange={handleChange}
+            />
+          </div>
+          <div className="form-group">
+            <label>Property Type</label>
+            <select name="type" value={formData.type} onChange={handleChange}>
+              <option value="">Select Type</option>
+              <option value="apartment">Apartment</option>
+              <option value="house">House</option>
+              <option value="pg">PG</option>
+              <option value="studio">Studio</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Photo Management Section */}
+        <div className="photo-management-section">
+          <label>Property Photos</label>
+
+          {/* Existing Photos */}
+          {existingPhotos.length > 0 && (
+            <div className="photos-section">
+              <h5>Current Photos ({existingPhotos.length})</h5>
+              <div className="photos-grid">
+                {existingPhotos.map((photo, index) => (
+                  <div key={`existing-${index}`} className="photo-item">
+                    <img
+                      src={getPhotoUrl(photo)}
+                      alt={`Property ${index + 1}`}
+                      className="photo-thumbnail"
+                    />
+                    <button
+                      type="button"
+                      className="remove-photo-btn"
+                      onClick={() => removeExistingPhoto(index)}
+                      title="Remove photo"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* New Photos */}
+          {newPhotos.length > 0 && (
+            <div className="photos-section">
+              <h5>New Photos ({newPhotos.length})</h5>
+              <div className="photos-grid">
+                {newPhotos.map((photo, index) => (
+                  <div key={`new-${index}`} className="photo-item">
+                    <img
+                      src={URL.createObjectURL(photo)}
+                      alt={`New ${index + 1}`}
+                      className="photo-thumbnail"
+                    />
+                    <button
+                      type="button"
+                      className="remove-photo-btn"
+                      onClick={() => removeNewPhoto(index)}
+                      title="Remove photo"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Add Photos Button */}
+          <div className="add-photo-section">
+            <input
+              type="file"
+              multiple
+              accept="image/*"
+              onChange={handlePhotoSelect}
+              id="photo-upload"
+              style={{ display: 'none' }}
+            />
+            <button
+              type="button"
+              className="btn-outline"
+              onClick={() => document.getElementById('photo-upload').click()}
+            >
+              + Add Photos
+            </button>
+            <span className="photo-hint">
+              You can add multiple photos. Click × on any photo to remove it.
+            </span>
+          </div>
+        </div>
+
+        <div className="modal-actions">
+          <button type="button" className="btn-outline" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="btn-secondary">
+            Save Changes
+          </button>
+        </div>
+      </form>
+    );
+  }
 }
 
 // Rent History Content Component
 function RentHistoryContent({ property, rentHistory, totalPayments, totalRevenue, onClose }) {
-  return (
-    <div className="rent-history-content">
-      <div className="rent-summary">
-        <div className="summary-card">
-          <h5>Property Status</h5>
-          <p className={`status ${property.status}`}>
-            {property.status === 'rented' ? 'Rented' : 'Available'}
-          </p>
-        </div>
-        <div className="summary-card">
-          <h5>Monthly Rent</h5>
-          <p>₹{property.rent?.toLocaleString() || 0}</p>
-        </div>
-        <div className="summary-card">
-          <h5>Total Payments</h5>
-          <p>{totalPayments}</p>
-        </div>
-        <div className="summary-card">
-          <h5>Total Revenue</h5>
-          <p>₹{totalRevenue.toLocaleString()}</p>
-        </div>
-      </div>
-
-      {property.currentTenant && (
-        <div className="current-tenant">
-          <h5>Current Tenant</h5>
-          <div className="tenant-info">
-            <p><strong>Name:</strong> {property.currentTenant.name || 'N/A'}</p>
-            <p><strong>Email:</strong> {property.currentTenant.email || 'N/A'}</p>
-            <p><strong>Phone:</strong> {property.currentTenant.phone || 'N/A'}</p>
+    return (
+      <div className="rent-history-content">
+        <div className="rent-summary">
+          <div className="summary-card">
+            <h5>Property Status</h5>
+            <p className={`status ${property.status}`}>
+              {property.status === 'rented' ? 'Rented' : 'Available'}
+            </p>
+          </div>
+          <div className="summary-card">
+            <h5>Monthly Rent</h5>
+            <p>₹{property.rent?.toLocaleString() || 0}</p>
+          </div>
+          <div className="summary-card">
+            <h5>Total Payments</h5>
+            <p>{totalPayments}</p>
+          </div>
+          <div className="summary-card">
+            <h5>Total Revenue</h5>
+            <p>₹{totalRevenue.toLocaleString()}</p>
           </div>
         </div>
-      )}
 
-      <div className="rent-history-list">
-        <h5>Payment History</h5>
-        {rentHistory.length === 0 ? (
-          <p>No payment records found.</p>
-        ) : (
-          <div className="payment-list">
-            {rentHistory.map((payment) => (
-              <div key={payment.id} className="payment-item">
-                <div className="payment-info">
-                  <p><strong>Date:</strong> {new Date(payment.paymentDate).toLocaleDateString()}</p>
-                  <p><strong>Amount:</strong> ₹{payment.amount?.toLocaleString() || 0}</p>
-                  <p><strong>Status:</strong> 
-                    <span className={`payment-status ${payment.status}`}>
-                      {payment.status || 'Pending'}
-                    </span>
-                  </p>
-                </div>
-              </div>
-            ))}
+        {property.currentTenant && (
+          <div className="current-tenant">
+            <h5>Current Tenant</h5>
+            <div className="tenant-info">
+              <p><strong>Name:</strong> {property.currentTenant.name || 'N/A'}</p>
+              <p><strong>Email:</strong> {property.currentTenant.email || 'N/A'}</p>
+              <p><strong>Phone:</strong> {property.currentTenant.phone || 'N/A'}</p>
+            </div>
           </div>
         )}
-      </div>
 
-      <div className="modal-actions">
-        <button className="btn-secondary" onClick={onClose}>
-          Close
-        </button>
+        <div className="rent-history-list">
+          <h5>Payment History</h5>
+          {rentHistory.length === 0 ? (
+            <p>No payment records found.</p>
+          ) : (
+            <div className="payment-list">
+              {rentHistory.map((payment) => (
+                <div key={payment.id} className="payment-item">
+                  <div className="payment-info">
+                    <p><strong>Date:</strong> {new Date(payment.paymentDate).toLocaleDateString()}</p>
+                    <p><strong>Amount:</strong> ₹{payment.amount?.toLocaleString() || 0}</p>
+                    <p><strong>Status:</strong>
+                      <span className={`payment-status ${payment.status}`}>
+                        {payment.status || 'Pending'}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="modal-actions">
+          <button className="btn-secondary" onClick={onClose}>
+            Close
+          </button>
+        </div>
       </div>
-    </div>
-  );
-}
+    );
+  }

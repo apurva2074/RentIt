@@ -578,59 +578,94 @@ module.exports = ({ admin, db }) => {
     }
   });
 
-  // Get user profile by UID (public endpoint for property owner info)
-  router.get("/:uid", async (req, res) => {
-    try {
-      const { uid } = req.params;
-      console.log(`🔹 Getting user profile for UID: ${uid}`);
-      
-      if (!uid) {
-        return res.status(400).json({ message: "User ID is required" });
-      }
-      
-      const userDoc = await db.collection("users").doc(uid).get();
-      
-      if (!userDoc.exists) {
-        console.log(`🔹 User not found: ${uid}`);
-        return res.status(404).json({ message: "User not found" });
-      }
-      
-      const userData = userDoc.data();
-      let displayName = userData.name || 'Property Owner';
-      
-      // If name is generic or missing, try to get from Firebase Auth
-      if (!userData.name || userData.name === 'User' || userData.name.length < 2) {
-        try {
-          const authUser = await admin.auth().getUser(uid);
-          if (authUser.displayName && authUser.displayName !== 'User') {
-            displayName = authUser.displayName;
-            console.log(`🔹 Using Firebase Auth display name: ${displayName}`);
-          } else if (authUser.email) {
-            // Extract name from email as last resort
-            const emailName = authUser.email.split('@')[0];
-            displayName = emailName.charAt(0).toUpperCase() + emailName.slice(1);
-            console.log(`🔹 Using email-derived name: ${displayName}`);
-          }
-        } catch (authError) {
-          console.warn(`🔹 Could not fetch Firebase Auth user: ${authError.message}`);
-        }
-      }
-      
-      console.log(`🔹 Found user: ${displayName}`);
-      
-      // Return only necessary public information
-      return res.json({
-        id: userDoc.id,
-        name: displayName,
-        email: userData.email || '',
-        phone: userData.phone || '',
-        profilePicture: userData.profilePicture || null
-      });
-    } catch (err) {
-      console.error("GET user error:", err);
-      return res.status(500).json({ message: err.message || "Server error" });
+  // GET /api/users/:userId – get user profile (name, email, etc.)
+router.get('/:userId', verifyTokenMiddleware, async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const doc = await db.collection('users').doc(userId).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: 'User not found' });
     }
-  });
+    const userData = doc.data();
+    
+    // Return the actual name from Firestore, with fallbacks
+    let displayName = userData.name || 'Property Owner';
+    
+    // If name is missing or generic, try Firebase Auth
+    if (!userData.name || userData.name === 'User' || userData.name.length < 2) {
+      try {
+        const authUser = await admin.auth().getUser(userId);
+        if (authUser.displayName && authUser.displayName !== 'User') {
+          displayName = authUser.displayName;
+          console.log(`🔹 Using Firebase Auth display name: ${displayName}`);
+        } else if (authUser.email) {
+          const emailName = authUser.email.split('@')[0];
+          displayName = emailName.charAt(0).toUpperCase() + emailName.slice(1);
+          console.log(`🔹 Using email-derived name: ${displayName}`);
+        }
+      } catch (authError) {
+        console.warn(`🔹 Could not fetch Firebase Auth user: ${authError.message}`);
+      }
+    }
+    
+    // Return only safe fields
+    res.json({
+      uid: userId,
+      name: displayName,
+      email: userData.email || null,
+      role: userData.role || null,
+      createdAt: userData.createdAt || null,
+      phone: userData.phone || '',
+      profilePicture: userData.profilePicture || null
+    });
+  } catch (err) {
+    console.error('Error fetching user:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+  // PUT /api/users/:userId/public-key
+// Store the public key of the authenticated user
+router.put('/:userId/public-key', verifyTokenMiddleware, async (req, res) => {
+  const { userId } = req.params;
+  const { publicKey } = req.body;
+
+  // Security: only the user themselves can set their public key
+  if (req.auth.uid !== userId) {
+    return res.status(403).json({ error: 'Forbidden – you cannot set public key for another user' });
+  }
+
+  if (!publicKey || typeof publicKey !== 'string') {
+    return res.status(400).json({ error: 'Invalid publicKey' });
+  }
+
+  try {
+    await db.collection('users').doc(userId).set({ publicKey }, { merge: true });
+    logger.log(`Public key saved for user: ${userId}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error saving public key:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/users/:userId/public-key
+// Retrieve the public key of any user (only for authenticated requests)
+router.get('/:userId/public-key', verifyTokenMiddleware, async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const doc = await db.collection('users').doc(userId).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const publicKey = doc.data().publicKey || null;
+    res.json({ publicKey });
+  } catch (err) {
+    console.error('Error fetching public key:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
   return router;
 };

@@ -8,6 +8,8 @@ import { collection, doc, onSnapshot, orderBy, query } from "firebase/firestore"
 import { sendMessage, sendTypingIndicator, markMessagesAsRead, addMessageReaction, getChatById } from "../../services/chatService";
 import { useAuth } from "../../hooks/useAuth";
 import { getAuthToken } from "../../utils/authToken";
+import { decryptMessage } from "../../services/encryptionService";
+import { fetchUserPublicKey, initUserEncryption } from "../../services/userEncryption";
 
 export default function Chat() {
   const { chatId } = useParams();
@@ -27,171 +29,161 @@ export default function Chat() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
+  const sentMessagesCache = useRef(new Map());
 
-  const setupRealtimeListeners = useCallback((initialChatData) => {
-    // Guard against null user
-    if (!user || !user.uid) {
-      console.error('Cannot setup listeners: No authenticated user');
-      return () => {};
+  // Helper function to fetch other user info
+  const fetchOtherUserInfo = async (otherUserId, chatData) => {
+    try {
+      const token = await getAuthToken();
+      const response = await fetch(`${process.env.REACT_APP_API_BASE || 'http://localhost:5000'}/api/users/${otherUserId}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const userData = await response.json();
+        const displayName = userData.name || userData.email?.split('@')[0] || 'User';
+        return {
+          name: displayName,
+          role: chatData.ownerId === otherUserId ? 'owner' : 'tenant',
+          email: userData.email,
+          uid: otherUserId,
+        };
+      }
+      throw new Error('Failed to fetch user');
+    } catch (error) {
+      console.warn('Could not fetch user name, using fallback:', error);
+      const fallbackName = chatData.ownerId === otherUserId ? 'Property Owner' : 'Tenant';
+      return {
+        name: fallbackName,
+        role: chatData.ownerId === otherUserId ? 'owner' : 'tenant',
+        uid: otherUserId,
+      };
     }
+  };
 
-    // Real-time chat listener
-    console.log(`Setting up chat listener for chat: ${chatId}`);
-    console.log(`Current user UID: ${user?.uid}`);
-    
-    const chatUnsub = onSnapshot(doc(db, "chats", chatId), async (chatDoc) => {
-      console.log(`Chat snapshot received, exists: ${chatDoc.exists()}`);
-      console.log(`Current user UID: ${user?.uid}`);
-      
-      if (chatDoc.exists()) {
-        const chatData = { chatId: chatDoc.id, ...chatDoc.data() };
-        console.log(`Chat data:`, chatData);
-        console.log(`Participants array:`, chatData.participants);
-        console.log(`Is current user in participants:`, chatData.participants?.includes(user?.uid));
-        setChat(chatData);
-        
-        // Handle typing indicators
-        const typingIndicators = chatData.typingIndicators || {};
-        const otherUserId = chatData.ownerId === user.uid ? chatData.tenantId : chatData.ownerId;
-        const otherUserTyping = typingIndicators[otherUserId];
-        setIsTyping(otherUserTyping?.isTyping || false);
-        
-        // Determine if the other user is an owner or tenant
-        try {
-          const isOtherUserOwner = chatData.ownerId === otherUserId;
-          
-          if (isOtherUserOwner) {
-            // Fetch owner's actual name from API
-            try {
-              console.log(`Fetching owner info for chat: ${otherUserId}`);
-              const token = await getAuthToken();
-              const response = await fetch(`${process.env.REACT_APP_API_BASE || 'http://localhost:5000'}/api/users/${otherUserId}`, {
-                headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'Content-Type': 'application/json'
-                }
-              });
-              
-              if (response.ok) {
-                const ownerData = await response.json();
-                console.log(`Owner data received for chat:`, ownerData);
-                setOtherUser({
-                  name: ownerData.name || 'Property Owner',
-                  role: 'owner',
-                  email: ownerData.email || null,
-                  uid: otherUserId
-                });
-              } else {
-                throw new Error('Failed to fetch owner data');
-              }
-            } catch (fetchError) {
-              console.warn('Could not fetch owner name, using fallback:', fetchError);
-              setOtherUser({
-                name: 'Property Owner',
-                role: 'owner',
-                email: null,
-                uid: otherUserId
-              });
-            }
-          } else {
-            // For tenants, show "Tenant" (we could fetch tenant name too if needed)
-            setOtherUser({
-              name: 'Tenant',
-              role: 'tenant',
-              email: null,
-              uid: otherUserId
-            });
-          }
-          
-          console.log('Other user role:', isOtherUserOwner ? 'owner' : 'tenant');
-        } catch (error) {
-          console.error('Error fetching user data:', error);
-          // Fallback to generic names
-          const isOtherUserOwner = chatData.ownerId === otherUserId;
-          setOtherUser({
-            name: isOtherUserOwner ? "Property Owner" : "Tenant",
-            role: isOtherUserOwner ? "owner" : "tenant",
-            uid: otherUserId
-          });
-        }
+  const setupRealtimeListeners = useCallback(() => {
+  if (!user || !user.uid || !chatId) return () => {};
+
+  let chatUnsub = null;
+  let messagesUnsub = null;
+  let participantConfirmed = false;
+
+  // Chat listener with participant verification
+  chatUnsub = onSnapshot(
+    doc(db, "chats", chatId),
+    (chatDoc) => {
+      if (!chatDoc.exists()) {
+        console.warn("Chat document does not exist");
+        setLoading(false);
+        return;
+      }
+
+      const chatData = { chatId: chatDoc.id, ...chatDoc.data() };
+      console.log("Chat snapshot received", chatData);
+      setChat(chatData);
+
+      // Update other user info (same as before)
+      const otherUserId = chatData.ownerId === user.uid ? chatData.tenantId : chatData.ownerId;
+      fetchOtherUserInfo(otherUserId, chatData).then(setOtherUser);
+
+      // Handle typing indicators
+      const typingIndicators = chatData.typingIndicators || {};
+      const otherUserTyping = typingIndicators[otherUserId];
+      setIsTyping(otherUserTyping?.isTyping || false);
+
+      // ✅ Participant check: if confirmed and messages listener not attached, attach now
+      const isParticipant = chatData.participants?.includes(user.uid);
+      if (isParticipant && !messagesUnsub && !participantConfirmed) {
+        participantConfirmed = true;
+        console.log("User confirmed as participant, attaching messages listener");
+        attachMessagesListener(chatId, user.uid, chatData);
+      } else if (!isParticipant) {
+        console.warn("User not a participant yet, waiting...");
+      }
+
+      setLoading(false);
+    },
+    (error) => {
+      console.error("Chat listener error:", error);
+      if (error.code === "permission-denied") {
+        console.error("You are not a participant in this chat");
+        // Optionally navigate away
       }
       setLoading(false);
-    }, (error) => {
-      console.error('Error listening to chat:', error);
-      console.error('Error code:', error.code);
-      console.error('Error message:', error.message);
-      
-      // Provide user-friendly error messages
-      if (error.code === 'permission-denied') {
-        console.error('Permission denied - User may not be a participant in this chat');
-      } else if (error.code === 'unavailable') {
-        console.error('Firebase connection unavailable');
-      } else if (error.code === 'unauthenticated') {
-        console.error('User not authenticated');
-      }
-      
-      setLoading(false);
-    });
+    }
+  );
 
-    // Real-time messages listener
+  // Separate function to attach messages listener (only once)
+  const attachMessagesListener = (id, uid, currentChatData) => {
+    if (messagesUnsub) return;
+
     const messagesQuery = query(
-      collection(db, "chats", chatId, "messages"),
+      collection(db, "chats", id, "messages"),
       orderBy("timestamp", "asc")
     );
-    
-    console.log(`Setting up messages listener for chat: ${chatId}`);
-    console.log(`Current user UID: ${user?.uid}`);
-    
-    const messagesUnsub = onSnapshot(messagesQuery, (snapshot) => {
-      console.log(`Messages snapshot received: ${snapshot.docs.length} messages`);
-      const messagesData = snapshot.docs.map(doc => {
-        const messageData = doc.data();
-        return {
-          messageId: doc.id,
-          ...messageData,
-          // Ensure required fields exist with defaults
-          senderId: messageData.senderId || 'unknown',
-          message: messageData.message || '',
-          timestamp: messageData.timestamp || null
-        };
-      });
-      setMessages(messagesData);
-      
-      // Mark messages as read when they are loaded
-      const unreadMessages = messagesData.filter(
-        msg => msg && msg.senderId !== user?.uid && !msg.read
-      );
-      if (unreadMessages.length > 0) {
-        console.log(`Marking ${unreadMessages.length} messages as read for chat: ${chatId}`);
-        markMessagesAsRead(chatId)
-          .then(result => {
-            console.log("Messages marked as read successfully:", result);
-          })
-          .catch(err => {
-            console.error('Error marking messages as read:', err);
-            console.error('Full error details:', err.message, err.stack);
-          });
-      }
-    }, (error) => {
-      console.error('Error listening to messages:', error);
-      console.error('Error code:', error.code);
-      console.error('Error message:', error.message);
-      
-      // Provide user-friendly error messages
-      if (error.code === 'permission-denied') {
-        console.error('Permission denied - User may not be a participant in this chat');
-      } else if (error.code === 'unavailable') {
-        console.error('Firebase connection unavailable');
-      } else if (error.code === 'unauthenticated') {
-        console.error('User not authenticated');
-      }
-    });
 
-    return () => {
-      chatUnsub();
-      messagesUnsub();
-    };
-  }, [chatId, user]);
+    messagesUnsub = onSnapshot(
+      messagesQuery,
+      async (snapshot) => {
+        const msgs = [];
+        for (const doc of snapshot.docs) {
+          const messageData = doc.data();
+          let displayText = messageData.message; // start with raw stored message
+
+          try {
+            if (messageData.senderId === uid) {
+              // Own message: try cache first
+              const plain = window.sentMessagesCache?.get(doc.id);
+              if (plain) displayText = plain;
+            } else {
+              // Try to decrypt – if it fails, assume plain text
+              const senderPublicKey = await fetchUserPublicKey(messageData.senderId).catch(() => null);
+              if (senderPublicKey) {
+                const decrypted = decryptMessage(messageData.message, senderPublicKey);
+                if (decrypted && !decrypted.includes('[Encrypted]')) displayText = decrypted;
+              }
+              // If no key or decryption fails, keep original message (plain text fallback)
+            }
+          } catch (err) {
+            console.warn('Decryption error, showing raw message:', err);
+            // keep displayText as original
+          }
+
+          msgs.push({
+            messageId: doc.id,
+            ...messageData,
+            message: displayText,
+            timestamp: messageData.timestamp,
+          });
+        }
+        setMessages(msgs);
+
+        // Mark unread messages as read
+        const unread = msgs.filter((m) => m.senderId !== uid && !m.read);
+        if (unread.length) {
+          markMessagesAsRead(id).catch((err) =>
+            console.error("Error marking read:", err)
+          );
+        }
+      },
+      (err) => {
+        console.error("Messages listener error:", err);
+        // Only retry if we are still a participant and chat exists
+        if (err.code === "permission-denied") {
+          console.error("Still permission denied, will retry on next chat snapshot");
+          participantConfirmed = false;
+          messagesUnsub = null;
+        }
+      }
+    );
+  };
+
+  // Cleanup function to remove both listeners
+  return () => {
+    if (chatUnsub) chatUnsub();
+    if (messagesUnsub) messagesUnsub();
+    console.log("Chat listeners cleaned up");
+  };
+}, [chatId, user]); // Depend on user to re-run when auth changes
 
   useEffect(() => {
     // Show loading while auth is loading or no user
@@ -204,8 +196,8 @@ export default function Chat() {
       return;
     }
 
-    // First, verify chat access via API
-    const verifyChatAccess = async () => {
+    // First, verify chat access via API and set up listeners
+    const initChat = async () => {
       try {
         const chatData = await getChatById(chatId);
         console.log('Chat access verified:', chatData);
@@ -213,8 +205,9 @@ export default function Chat() {
         // Set initial chat data
         setChat(chatData);
         
-        // Now set up real-time listeners
-        setupRealtimeListeners(chatData);
+        // Set up real-time listeners and store cleanup function
+        const cleanupListeners = setupRealtimeListeners();
+        return cleanupListeners;
         
       } catch (error) {
         console.error('Chat access denied:', error);
@@ -237,10 +230,17 @@ export default function Chat() {
         } else {
           navigate('/dashboard');
         }
+        return null;
       }
     };
 
-    verifyChatAccess();
+    let cleanup;
+    initChat().then((cleanupFn) => { cleanup = cleanupFn; });
+    
+    // Return cleanup function for useEffect
+    return () => {
+      if (cleanup) cleanup();
+    };
   }, [chatId, user, authLoading, navigate, setupRealtimeListeners]);
 
   useEffect(() => {
@@ -259,10 +259,17 @@ export default function Chat() {
       return;
     }
 
+    const messageText = newMessage.trim();
     setSendingMessage(true);
     try {
       // Use API service for message sending to ensure proper authorization
-      await sendMessage(chatId, newMessage.trim());
+      const response = await sendMessage(chatId, messageText);
+      
+      // Cache the plain text of the sent message using the message ID from response
+      if (response.messageId) {
+        sentMessagesCache.current.set(response.messageId, messageText);
+      }
+      
       setNewMessage("");
     } catch (error) {
       console.error('Error sending message:', error);
@@ -273,6 +280,8 @@ export default function Chat() {
         alert('Cannot send message: Chat is read-only');
       } else if (errorMessage.includes('ACCESS_DENIED')) {
         alert('You are not authorized to send messages in this chat');
+      } else if (errorMessage.includes('encryption') || errorMessage.includes('Public key')) {
+        alert('Failed to send secure message: Recipient may not have encryption set up');
       } else {
         alert('Failed to send message. Please try again.');
       }
@@ -319,36 +328,60 @@ export default function Chat() {
   const emojis = ['Heart', 'ThumbsUp', 'Happy', 'Laughing', 'Surprised', 'Sad', 'Clap', 'Fire'];
 
   const formatTime = (timestamp) => {
-    if (!timestamp) return '';
-    
-    const date = timestamp?.toDate ? timestamp.toDate() : new Date(timestamp);
-    return date.toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: true 
+  if (!timestamp) return '';
+  
+  let date;
+  if (timestamp.toDate && typeof timestamp.toDate === 'function') {
+    date = timestamp.toDate();
+  } else if (timestamp instanceof Date) {
+    date = timestamp;
+  } else if (typeof timestamp === 'string' || typeof timestamp === 'number') {
+    date = new Date(timestamp);
+  } else {
+    return '';
+  }
+  
+  if (isNaN(date.getTime())) return '';
+  
+  return date.toLocaleTimeString('en-US', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: true 
+  });
+};
+
+const formatDate = (timestamp) => {
+  if (!timestamp) return '';
+  
+  let date;
+  if (timestamp.toDate && typeof timestamp.toDate === 'function') {
+    date = timestamp.toDate();
+  } else if (timestamp instanceof Date) {
+    date = timestamp;
+  } else if (typeof timestamp === 'string' || typeof timestamp === 'number') {
+    date = new Date(timestamp);
+  } else {
+    return '';
+  }
+  
+  if (isNaN(date.getTime())) return '';
+  
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) {
+    return 'Today';
+  } else if (date.toDateString() === yesterday.toDateString()) {
+    return 'Yesterday';
+  } else {
+    return date.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined
     });
-  };
-
-  const formatDate = (timestamp) => {
-    if (!timestamp) return '';
-    
-    const date = timestamp?.toDate ? timestamp.toDate() : new Date(timestamp);
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-
-    if (date.toDateString() === today.toDateString()) {
-      return 'Today';
-    } else if (date.toDateString() === yesterday.toDateString()) {
-      return 'Yesterday';
-    } else {
-      return date.toLocaleDateString('en-US', { 
-        month: 'short', 
-        day: 'numeric',
-        year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined
-      });
-    }
-  };
+  }
+};
 
   // Search functionality
   useEffect(() => {
@@ -432,7 +465,7 @@ export default function Chat() {
             <div className="chat-user-info">
               <div className="user-avatar">
                 <div className="avatar-circle">
-                  {otherUser?.role === 'owner' ? 'Owner' : 'Tenant'}
+                  {otherUser?.name ? otherUser.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase() : (otherUser?.role === 'owner' ? 'O' : 'T')}
                 </div>
                 <div className={`online-indicator ${isTyping ? 'typing' : 'offline'}`}></div>
               </div>
@@ -459,6 +492,24 @@ export default function Chat() {
                 <path d="m21 21-4.35-4.35"/>
               </svg>
             </button>
+            {/* Debug button for testing - remove in production */}
+            {process.env.NODE_ENV === 'development' && (
+              <button 
+                className="chat-action-btn"
+                onClick={async () => {
+                  try {
+                    await initUserEncryption(user);
+                    alert('Encryption keys regenerated successfully!');
+                  } catch (error) {
+                    console.error('Failed to regenerate keys:', error);
+                    alert('Failed to regenerate keys: ' + error.message);
+                  }
+                }}
+                title="Reset Encryption Keys (Debug)"
+              >
+                🔐
+              </button>
+            )}
             <button className="chat-action-btn">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>

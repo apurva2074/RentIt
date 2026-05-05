@@ -260,12 +260,17 @@ module.exports = ({ admin, db }) => {
         // CRITICAL: Verify this user actually owns the property in this chat
         try {
           const propertyDoc = await db.collection("properties").doc(chatData.propertyId).get();
-          if (propertyDoc.exists && propertyDoc.data().owner_uid === currentUserId) {
-            logger.log("User actually owns property, adding owner chat:", doc.id);
-            allChats.set(doc.id, { doc, role: 'owner' });
-            hasOwnerChats = true;
+          if (propertyDoc.exists) {
+            const propertyOwner = propertyDoc.data().ownerId || propertyDoc.data().owner_uid;
+            if (propertyOwner === currentUserId) {
+              logger.log("User actually owns property, adding owner chat:", doc.id);
+              allChats.set(doc.id, { doc, role: 'owner' });
+              hasOwnerChats = true;
+            } else {
+              logger.log("User does NOT own property (owner mismatch), skipping owner chat:", doc.id);
+            }
           } else {
-            logger.log("User does NOT own property, skipping owner chat:", doc.id);
+            logger.log("Property not found, skipping owner chat:", doc.id);
           }
         } catch (propertyError) {
           logger.log("Error verifying property ownership for owner chat:", propertyError.message);
@@ -422,11 +427,35 @@ module.exports = ({ admin, db }) => {
         // Attach other user data
         const otherUserId = chat.ownerId === currentUserId ? chat.tenantId : chat.ownerId;
         const otherUserData = users[otherUserId];
-        chat.otherUser = otherUserData ? {
-          ...otherUserData,
-          name: otherUserData.name || "Unknown User",
-          email: otherUserData.email
-        } : null;
+        
+        if (otherUserData) {
+          let displayName = otherUserData.name;
+          
+          // If name is missing or generic, try Firebase Auth
+          if (!displayName || displayName === 'User' || displayName.length < 2) {
+            try {
+              const authUser = await admin.auth().getUser(otherUserId);
+              if (authUser.displayName && authUser.displayName !== 'User') {
+                displayName = authUser.displayName;
+                logger.log(`🔹 Using Firebase Auth display name for ${otherUserId}: ${displayName}`);
+              } else if (authUser.email) {
+                const emailName = authUser.email.split('@')[0];
+                displayName = emailName.charAt(0).toUpperCase() + emailName.slice(1);
+                logger.log(`🔹 Using email-derived name for ${otherUserId}: ${displayName}`);
+              }
+            } catch (authError) {
+              logger.warn(`🔹 Could not fetch Firebase Auth user ${otherUserId}: ${authError.message}`);
+            }
+          }
+          
+          chat.otherUser = {
+            ...otherUserData,
+            name: displayName || "Unknown User",
+            email: otherUserData.email
+          };
+        } else {
+          chat.otherUser = null;
+        }
       }
 
       // Sort chats by lastMessageTime in descending order (client-side sorting)
@@ -879,6 +908,54 @@ module.exports = ({ admin, db }) => {
     } catch (err) {
       logger.error("Reaction error:", err);
       return res.status(500).json({ message: "Server error", error: err.message });
+    }
+  });
+
+  // POST /api/chats/mark-all-read - Mark all messages as read for the current user
+  router.post("/mark-all-read", verifyTokenMiddleware, async (req, res) => {
+    const currentUserId = req.auth.uid;
+    if (!currentUserId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    try {
+      // Fetch all chat IDs where user is a participant
+      const chatsQuery = await db.collection("chats")
+        .where("participants", "array-contains", currentUserId)
+        .get();
+
+      if (chatsQuery.empty) {
+        return res.json({ success: true, markedCount: 0 });
+      }
+
+      const batch = db.batch();
+      let totalMarked = 0;
+
+      for (const chatDoc of chatsQuery.docs) {
+        const chatId = chatDoc.id;
+        // Get all messages in this chat not sent by current user and not already read
+        const messagesQuery = await db.collection("chats").doc(chatId).collection("messages")
+          .where("senderId", "!=", currentUserId)
+          .where("read", "==", false)
+          .get();
+
+        messagesQuery.forEach(msgDoc => {
+          batch.update(msgDoc.ref, {
+            read: true,
+            readAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+          totalMarked++;
+        });
+      }
+
+      if (totalMarked > 0) {
+        await batch.commit();
+      }
+
+      res.json({ success: true, markedCount: totalMarked });
+    } catch (err) {
+      console.error("Error marking all messages as read:", err);
+      res.status(500).json({ message: "Server error", error: err.message });
     }
   });
 

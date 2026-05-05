@@ -414,7 +414,7 @@ export default function PropertyDetails() {
           console.error('🔍 DEBUG: Navigation failed:', error);
           window.location.href = `/tenant/agreement/${currentBooking.id}`;
         }
-      }, 500);
+      }, 2000);
       return;
     }
     

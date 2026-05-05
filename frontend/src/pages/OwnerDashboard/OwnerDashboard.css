@@ -103,6 +103,27 @@
   height: 18px;
 }
 
+/* Unread Badge Styles */
+.unread-badge {
+  background-color: #e74c3c;
+  color: white;
+  border-radius: 50%;
+  padding: 2px 6px;
+  font-size: 12px;
+  margin-left: 8px;
+  font-weight: normal;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.tab.active .unread-badge {
+  background-color: #c0392b; /* darker red when tab active */
+}
+
 /* Dashboard-specific header styles - don't affect regular header */
 .minimal-dashboard .dashboard-header {
   background: linear-gradient(135deg, var(--primary-dark) 0%, var(--primary) 100%);
@@ -776,7 +797,106 @@ background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
   background: #ef4444;
   color: white;
   transform: translateY(-1px);
-  box-shadow: 0 1px 2px rgba(239, 68, 68, 0.2);
+  box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);
+}
+
+/* Rent Request Action Buttons */
+.request-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.btn-accept,
+.btn-reject {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: var(--radius);
+  font-weight: 500;
+  font-size: 14px;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+  min-width: 120px;
+  justify-content: center;
+}
+
+.btn-accept {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+  border: none;
+  box-shadow: 0 2px 4px rgba(16, 185, 129, 0.2);
+}
+
+.btn-accept:hover:not(:disabled) {
+  background: linear-gradient(135deg, #059669, #047857);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.btn-accept:disabled {
+  background: linear-gradient(135deg, #9ca3af, #6b7280);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.btn-accept svg {
+  flex-shrink: 0;
+}
+
+.btn-reject {
+  background: transparent;
+  color: #ef4444;
+  border: 2px solid #ef4444;
+  box-shadow: 0 2px 4px rgba(239, 68, 68, 0.1);
+}
+
+.btn-reject:hover {
+  background: #ef4444;
+  color: white;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+  border-color: #ef4444;
+}
+
+.btn-reject svg {
+  flex-shrink: 0;
+}
+
+/* Button ripple effect */
+.btn-accept::before,
+.btn-reject::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.2);
+  transition: left 0.5s;
+}
+
+.btn-accept:hover::before,
+.btn-reject:hover::before {
+  left: 100%;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .request-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .btn-accept,
+  .btn-reject {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 /* Delete Confirmation Modal */

@@ -1,5 +1,52 @@
 // Frontend service for chat API calls
 import { getAuthToken } from '../utils/authToken';
+import { encryptMessage } from './encryptionService';
+import { fetchUserPublicKey } from './userEncryption';
+
+// Global cache for sent messages (store plain text)
+if (typeof window !== 'undefined' && !window.sentMessagesCache) {
+  window.sentMessagesCache = new Map();
+}
+
+// Feature flag for E2EE support
+let e2eeSupported = undefined; // undefined = unknown, true = supported, false = fallback
+
+const checkE2EESupport = async (recipientId) => {
+  if (e2eeSupported !== undefined) return e2eeSupported;
+  try {
+    const key = await fetchUserPublicKey(recipientId);
+    // If we get a 404 from fetchUserPublicKey (it returns null), assume not supported
+    if (key === null) {
+      console.warn('Public-key endpoint not available – falling back to plain text');
+      e2eeSupported = false;
+      return false;
+    }
+    e2eeSupported = true;
+    return true;
+  } catch {
+    e2eeSupported = false;
+    return false;
+  }
+};
+
+// Utility to reset E2EE support flag (for testing)
+export const resetE2EESupport = () => {
+  e2eeSupported = undefined;
+  console.log('E2EE support flag reset - will re-detect on next message');
+};
+
+// Mark all messages as read for the current user
+export const markAllMessagesAsRead = async () => {
+  try {
+    const response = await apiCall('/chats/mark-all-read', {
+      method: 'POST',
+    });
+    return response;
+  } catch (error) {
+    console.error('Mark all read error:', error);
+    throw error;
+  }
+};
 
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:5000';
 
@@ -98,19 +145,38 @@ export const getChatById = async (chatId) => {
 // Send message
 export const sendMessage = async (chatId, message) => {
   try {
-    return await apiCall(`/chats/${chatId}/messages`, {
+    const chat = await getChatById(chatId);
+    const currentUser = (await import('../firebase/auth')).auth?.currentUser;
+    if (!currentUser) throw new Error('No user');
+
+    const recipientId = chat.ownerId === currentUser.uid ? chat.tenantId : chat.ownerId;
+    const e2eeEnabled = await checkE2EESupport(recipientId);
+    
+    let finalMessage = message;
+    if (e2eeEnabled) {
+      const recipientPublicKey = await fetchUserPublicKey(recipientId);
+      if (recipientPublicKey) {
+        const encrypted = encryptMessage(message, recipientPublicKey);
+        if (encrypted) finalMessage = encrypted;
+        else console.warn('Encryption failed, sending plain text');
+      } else {
+        console.warn('No public key, sending plain text');
+      }
+    }
+
+    const response = await apiCall(`/chats/${chatId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message: finalMessage }),
     });
+
+    // Store plain text in cache for own messages
+    if (response.messageId && window.sentMessagesCache) {
+      window.sentMessagesCache.set(response.messageId, message);
+      setTimeout(() => window.sentMessagesCache.delete(response.messageId), 10 * 60 * 1000);
+    }
+    return response;
   } catch (error) {
-    console.error('Send message error:', {
-      message: error.message,
-      stack: error.stack,
-      response: error.response?.data,
-      status: error.response?.status,
-      chatId: chatId,
-      messageLength: message?.length
-    });
+    console.error('Send message error:', error);
     throw error;
   }
 };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import "./TenantChat.css";
 import { auth } from "../../../firebase/auth";
@@ -12,6 +12,76 @@ export default function TenantChat() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [groupBy, setGroupBy] = useState('property'); // 'property' or 'recent'
+  const [ownerNames, setOwnerNames] = useState({}); // Cache for fetched owner names
+
+  // Function to fetch owner names for chats that don't have them
+  const fetchOwnerNamesForChats = useCallback(async (chats) => {
+    const ownerIdsToFetch = [];
+    
+    // Identify chats that need owner names fetched
+    chats.forEach(chat => {
+      if (!chat.otherUser?.name && chat.ownerId && !ownerNames[chat.ownerId]) {
+        ownerIdsToFetch.push(chat.ownerId);
+      }
+    });
+    
+    if (ownerIdsToFetch.length === 0) {
+      console.log("✅ All owner names already available");
+      return;
+    }
+    
+    console.log(`🔄 Fetching names for ${ownerIdsToFetch.length} owners:`, ownerIdsToFetch);
+    
+    try {
+      const token = await user.getIdToken();
+      const fetchPromises = ownerIdsToFetch.map(async (ownerId) => {
+        try {
+          const response = await fetch(`${process.env.REACT_APP_API_BASE || 'http://localhost:5000'}/api/users/${ownerId}`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          if (response.ok) {
+            const ownerData = await response.json();
+            console.log(`✅ Fetched owner data for ${ownerId}:`, ownerData);
+            return { ownerId, name: ownerData.name };
+          } else {
+            console.log(`❌ Failed to fetch owner ${ownerId}: ${response.status}`);
+            return { ownerId, name: null };
+          }
+        } catch (error) {
+          console.log(`❌ Error fetching owner ${ownerId}:`, error);
+          return { ownerId, name: null };
+        }
+      });
+      
+      const results = await Promise.all(fetchPromises);
+      
+      // Update owner names cache and chat objects
+      const newOwnerNames = { ...ownerNames };
+      results.forEach(({ ownerId, name }) => {
+        if (name) {
+          newOwnerNames[ownerId] = name;
+        }
+      });
+      
+      setOwnerNames(newOwnerNames);
+      
+      // Update chat objects with fetched names
+      chats.forEach(chat => {
+        if (!chat.otherUser?.name && chat.ownerId && newOwnerNames[chat.ownerId]) {
+          chat.otherUser = { ...chat.otherUser, name: newOwnerNames[chat.ownerId] };
+          console.log(`✅ Updated chat ${chat.chatId} with owner name: ${newOwnerNames[chat.ownerId]}`);
+        }
+      });
+      
+      console.log("✅ Owner names fetched and cached:", newOwnerNames);
+    } catch (error) {
+      console.error("❌ Error fetching owner names:", error);
+    }
+  }, [ownerNames, user, setOwnerNames]);
 
   useEffect(() => {
     if (!user) {
@@ -33,7 +103,6 @@ export default function TenantChat() {
         const chatsData = response.chats || response;
         console.log("🧪 TenantChat - Chats data type:", typeof chatsData);
         console.log("🧪 TenantChat - Chats data length:", Array.isArray(chatsData) ? chatsData.length : 'Not an array');
-        console.log("🧪 TenantChat - Setting chats in state:", chatsData);
         
         // DETAILED LOGGING: Log each chat received
         if (Array.isArray(chatsData)) {
@@ -46,12 +115,65 @@ export default function TenantChat() {
               tenantId: chat.tenantId,
               ownerId: chat.ownerId,
               userRole: chat.userRole,
-              lastMessage: chat.lastMessage
+              lastMessage: chat.lastMessage,
+              otherUser: chat.otherUser,
+              otherUserName: chat.otherUser?.name,
+              ownerName: chat.ownerName
             });
           });
         }
         
-        setChats(chatsData);
+        // Deduplicate by ownerId, keeping the chat that has messages
+        const ownerChatMap = new Map();
+
+        chatsData.forEach(chat => {
+          const ownerId = chat.ownerId;
+          const existing = ownerChatMap.get(ownerId);
+          
+          if (!existing) {
+            // First chat for this owner – store it
+            ownerChatMap.set(ownerId, chat);
+          } else {
+            // Already have a chat – keep the one that has messages
+            const existingHasMessage = existing.lastMessage && existing.lastMessage !== null;
+            const newHasMessage = chat.lastMessage && chat.lastMessage !== null;
+            
+            if (newHasMessage && !existingHasMessage) {
+              // New chat has message, existing empty – replace
+              ownerChatMap.set(ownerId, chat);
+            } else if (newHasMessage && existingHasMessage) {
+              // Both have messages – keep the most recent (by lastMessageTime)
+              const existingTime = existing.lastMessageTime?.toDate?.() || new Date(0);
+              const newTime = chat.lastMessageTime?.toDate?.() || new Date(0);
+              if (newTime > existingTime) {
+                ownerChatMap.set(ownerId, chat);
+              }
+            }
+            // Otherwise keep existing (if existing has message and new empty, or both empty)
+          }
+        });
+
+        const uniqueChats = Array.from(ownerChatMap.values());
+
+        // Sort by lastMessageTime descending (most recent first)
+        uniqueChats.sort((a, b) => {
+          const timeA = a.lastMessageTime?.toDate?.() || new Date(0);
+          const timeB = b.lastMessageTime?.toDate?.() || new Date(0);
+          return timeB - timeA;
+        });
+
+        console.log("🧪 TenantChat - After deduplication:", {
+          originalCount: chatsData.length,
+          uniqueCount: uniqueChats.length,
+          duplicatesRemoved: chatsData.length - uniqueChats.length
+        });
+
+        console.log("🧪 TenantChat - Setting unique chats in state:", uniqueChats);
+        
+        // Fetch owner names for chats that don't have them
+        await fetchOwnerNamesForChats(uniqueChats);
+        
+        setChats(uniqueChats);
         setLoading(false);
       } catch (error) {
         console.error('🧪 TenantChat - Error fetching chats:', error);
@@ -60,7 +182,7 @@ export default function TenantChat() {
     };
 
     fetchChats();
-  }, [user, navigate]);
+  }, [user, navigate, fetchOwnerNamesForChats]);
 
   const handleChatClick = (chat) => {
     // Validate chat data before navigation
@@ -80,7 +202,19 @@ export default function TenantChat() {
   const formatTime = (timestamp) => {
     if (!timestamp) return '';
     
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    let date;
+    if (timestamp.toDate && typeof timestamp.toDate === 'function') {
+      date = timestamp.toDate();
+    } else if (timestamp instanceof Date) {
+      date = timestamp;
+    } else if (typeof timestamp === 'string' || typeof timestamp === 'number') {
+      date = new Date(timestamp);
+    } else {
+      return '';
+    }
+    
+    if (isNaN(date.getTime())) return '';
+    
     const now = new Date();
     const diffMs = now - date;
     const diffMins = Math.floor(diffMs / 60000);
@@ -137,6 +271,59 @@ export default function TenantChat() {
     return chats.reduce((total, chat) => total + (chat.unreadCount || 0), 0);
   }, [chats]);
 
+  // Helper function to get owner name with multiple fallbacks
+  const getOwnerName = (chat) => {
+    console.log(`🔍 DIAGNOSTIC - getOwnerName for chat ${chat.chatId}:`, {
+      otherUser: chat.otherUser,
+      ownerName: chat.ownerName,
+      propertyOwnerName: chat.property?.ownerName,
+      propertyContactPerson: chat.property?.contactPerson,
+      ownerId: chat.ownerId,
+      cachedOwnerName: chat.ownerId ? ownerNames[chat.ownerId] : null
+    });
+    
+    // DIAGNOSTIC: Check if otherUser.name is problematic
+    if (chat.otherUser?.name === 'User' || chat.otherUser?.name === 'Unknown User' || !chat.otherUser?.name) {
+      console.log(`🚨 DIAGNOSTIC - PROBLEM DETECTED in chat ${chat.chatId}:`);
+      console.log(`   otherUser.name: "${chat.otherUser?.name}"`);
+      console.log(`   otherUser.email: "${chat.otherUser?.email}"`);
+      console.log(`   Will try fallbacks...`);
+    }
+    
+    // 1. From otherUser object (backend-provided)
+    if (chat.otherUser?.name && chat.otherUser.name !== 'User' && chat.otherUser.name !== 'Unknown User') {
+      console.log(`✅ DIAGNOSTIC - Using otherUser.name: ${chat.otherUser.name}`);
+      return chat.otherUser.name;
+    }
+    // 2. From cached ownerNames map (if fetched separately)
+    if (chat.ownerId && ownerNames[chat.ownerId]) {
+      console.log(`✅ DIAGNOSTIC - Using cached owner name: ${ownerNames[chat.ownerId]}`);
+      return ownerNames[chat.ownerId];
+    }
+    // 3. Direct fallback from chat object
+    if (chat.ownerName) {
+      console.log(`✅ DIAGNOSTIC - Using chat.ownerName: ${chat.ownerName}`);
+      return chat.ownerName;
+    }
+    if (chat.property?.ownerName) {
+      console.log(`✅ DIAGNOSTIC - Using property.ownerName: ${chat.property.ownerName}`);
+      return chat.property.ownerName;
+    }
+    if (chat.property?.contactPerson) {
+      console.log(`✅ DIAGNOSTIC - Using property.contactPerson: ${chat.property.contactPerson}`);
+      return chat.property.contactPerson;
+    }
+    // 4. Email-derived fallback
+    if (chat.otherUser?.email) {
+      const emailName = chat.otherUser.email.split('@')[0];
+      console.log(`✅ DIAGNOSTIC - Using email username: ${emailName}`);
+      return emailName.charAt(0).toUpperCase() + emailName.slice(1);
+    }
+    
+    console.log(`❌ DIAGNOSTIC - No name found, using fallback 'Property Owner'`);
+    return 'Property Owner';
+  };
+
   // Enhanced last message preview
   const formatLastMessage = (chat) => {
     if (!chat.lastMessage) {
@@ -144,7 +331,7 @@ export default function TenantChat() {
     }
     
     const message = chat.lastMessage;
-    const sender = chat.lastMessageSenderId === user?.uid ? 'You' : chat.otherUser?.name || 'Owner';
+    const sender = chat.lastMessageSenderId === user?.uid ? 'You' : getOwnerName(chat);
     const maxLength = 50;
     
     let preview = `${sender}: ${message}`;
@@ -264,7 +451,7 @@ export default function TenantChat() {
                   >
                     <div className="chat-avatar">
                       <div className="avatar-circle">
-                        {chat.otherUser?.role === 'owner' ? 'Owner' : 'Tenant'}
+                        {chat.otherUser?.name ? chat.otherUser.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase() : (chat.otherUser?.role === 'owner' ? 'O' : 'T')}
                       </div>
                       {chat.unreadCount > 0 && (
                         <div className="unread-badge">
@@ -284,7 +471,7 @@ export default function TenantChat() {
                       <div className="chat-header-info">
                         <div className="chat-name-section">
                           <h3 className="chat-name">
-                            {chat.otherUser?.name || 'Property Owner'}
+                            {getOwnerName(chat)}
                           </h3>
                           {chat.property?.title && groupBy === 'recent' && (
                             <span className="chat-property-title">{chat.property.title}</span>

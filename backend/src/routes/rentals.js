@@ -477,14 +477,42 @@ module.exports = ({ admin, db }) => {
         const propertyRef = await db.collection("properties").doc(booking.propertyId).get();
         const property = propertyRef.exists ? propertyRef.data() : null;
         
-        // Get tenant details
-        let tenantDetails = null;
-        if (booking.tenantId) {
-          const tenantRef = await db.collection("tenantDetails").doc(booking.tenantId).get();
-          if (tenantRef.exists) {
-            tenantDetails = tenantRef.data();
+        // Get tenant details – preserve booking's data, only supplement missing fields
+        let tenantDetails = booking.tenantDetails || {};
+
+        // If fullName is missing, try to fetch from users or tenantDetails
+        if (!tenantDetails.fullName && booking.tenantId) {
+          // First try users collection (signup data)
+          const userRef = await db.collection("users").doc(booking.tenantId).get();
+          if (userRef.exists) {
+            const userData = userRef.data();
+            tenantDetails.fullName = userData.name || userData.fullName || null;
+            tenantDetails.email = userData.email || tenantDetails.email;
+            tenantDetails.phone = userData.phone || tenantDetails.phone;
+          }
+          
+          // Fallback to tenantDetails collection if still missing fullName
+          if (!tenantDetails.fullName) {
+            const tenantRef = await db.collection("tenantDetails").doc(booking.tenantId).get();
+            if (tenantRef.exists) {
+              const tenantData = tenantRef.data();
+              tenantDetails.fullName = tenantData.fullName || tenantData.name || tenantDetails.fullName;
+              tenantDetails.phone = tenantData.phone || tenantDetails.phone;
+              tenantDetails.email = tenantData.email || tenantDetails.email;
+            }
           }
         }
+
+        // Ensure defaults if still missing
+        tenantDetails = {
+          fullName: tenantDetails.fullName || 'Unknown Tenant',
+          email: tenantDetails.email || 'Unknown',
+          phone: tenantDetails.phone || 'Unknown',
+          ...(tenantDetails.currentAddress && { currentAddress: tenantDetails.currentAddress }),
+          ...(tenantDetails.occupation && { occupation: tenantDetails.occupation }),
+          ...(tenantDetails.moveInDate && { moveInDate: tenantDetails.moveInDate }),
+          ...(tenantDetails.leaseDuration && { leaseDuration: tenantDetails.leaseDuration })
+        };
         
         const enrichedBooking = {
           id: booking.id,
@@ -496,11 +524,7 @@ module.exports = ({ admin, db }) => {
             address: property.address,
             type: property.type
           } : null,
-          tenantDetails: tenantDetails || {
-            fullName: 'Unknown Tenant',
-            email: 'Unknown',
-            phone: 'Unknown'
-          }
+          tenantDetails: tenantDetails
         };
         
         allBookings.push(enrichedBooking);
