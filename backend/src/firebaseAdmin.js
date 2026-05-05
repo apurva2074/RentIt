@@ -1,6 +1,27 @@
 // src/firebaseAdmin.js
 const admin = require("firebase-admin");
 
+// Helper function to get Firebase private key from multiple sources
+function getFirebasePrivateKey() {
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+  const privateKeyBase64 = process.env.FIREBASE_PRIVATE_KEY_BASE64;
+  
+  if (privateKeyBase64) {
+    // Decode from Base64
+    const decoded = Buffer.from(privateKeyBase64, 'base64').toString('utf8');
+    console.log('Using Base64 decoded private key');
+    return decoded;
+  } else if (privateKey) {
+    // Handle escaped newlines in plain text (e.g., from .env)
+    const cleanedKey = privateKey.replace(/\\n/g, '\n');
+    console.log('Using plain text private key');
+    return cleanedKey;
+  } else {
+    console.log('No private key found in environment variables');
+    return null;
+  }
+}
+
 // Initialize Firebase Admin with environment-based configuration
 let serviceAccount;
 
@@ -82,31 +103,18 @@ if (process.env.NODE_ENV === 'production' || process.env.DEV_MODE === 'false') {
       // Fallback to environment variables
       console.log('No secret file found, using Firebase environment variables');
       
-      if (!process.env.FIREBASE_PRIVATE_KEY_BASE64 || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL) {
-        throw new Error('Missing required Firebase environment variables. Please check FIREBASE_PRIVATE_KEY_BASE64, FIREBASE_PROJECT_ID, and FIREBASE_CLIENT_EMAIL');
+      const privateKey = getFirebasePrivateKey();
+      
+      if (!privateKey || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL) {
+        throw new Error('Missing required Firebase environment variables. Please check FIREBASE_PRIVATE_KEY_BASE64 or FIREBASE_PRIVATE_KEY, FIREBASE_PROJECT_ID, and FIREBASE_CLIENT_EMAIL');
       }
       
-      // Create temporary service account file with correct PEM format
-      console.log('Creating temporary service account file');
-      
-      // Decode base64 private key
-      const privateKeyBuffer = Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64, 'base64');
-      let privateKeyContent = privateKeyBuffer.toString('utf8');
-      
-      console.log('Decoded private key length:', privateKeyContent.length);
-      console.log('Decoded private key starts with MIIE:', privateKeyContent.startsWith('MIIE'));
-      
-      // Ensure proper PEM formatting
-      if (!privateKeyContent.includes('-----BEGIN PRIVATE KEY-----')) {
-        privateKeyContent = `-----BEGIN PRIVATE KEY-----\n${privateKeyContent}\n-----END PRIVATE KEY-----\n`;
-      }
-      
-      // Create complete service account object
-      const serviceAccountData = {
+      // Create service account object using helper function
+      serviceAccount = {
         type: "service_account",
         project_id: process.env.FIREBASE_PROJECT_ID,
         private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID || "firebase-admin-key",
-        private_key: privateKeyContent,
+        private_key: privateKey,
         client_email: process.env.FIREBASE_CLIENT_EMAIL,
         client_id: process.env.FIREBASE_CLIENT_ID || "115408859884381730014",
         auth_uri: "https://accounts.google.com/o/oauth2/auth",
@@ -116,14 +124,9 @@ if (process.env.NODE_ENV === 'production' || process.env.DEV_MODE === 'false') {
         universe_domain: "googleapis.com"
       };
       
-      // Write to temporary file
-      const tempServiceAccountPath = '/tmp/serviceAccountKey.json';
-      fs.writeFileSync(tempServiceAccountPath, JSON.stringify(serviceAccountData, null, 2));
-      console.log('Temporary service account file created at:', tempServiceAccountPath);
-      
-      // Load from temporary file
-      serviceAccount = require(tempServiceAccountPath);
-      console.log('Service account loaded from temporary file');
+      console.log('Service account created from environment variables');
+      console.log('Private key exists:', !!serviceAccount.private_key);
+      console.log('Private key starts with -----BEGIN:', serviceAccount.private_key.startsWith('-----BEGIN'));
     }
   } catch (error) {
     console.error('Error loading Firebase credentials:', error.message);
